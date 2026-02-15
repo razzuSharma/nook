@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import {
   BookmarkCheck,
   Clock3,
@@ -34,17 +36,17 @@ const data = {
   primaryNav: [
     {
       title: "My Rooms",
-      url: "#",
+      url: "/dashboard",
       icon: Command,
     },
     {
       title: "Recent Activity",
-      url: "#",
+      url: "/dashboard#recent-activity",
       icon: Clock3,
     },
     {
       title: "Saved Tasks",
-      url: "#",
+      url: "/dashboard/saved-tasks",
       icon: BookmarkCheck,
     },
   ],
@@ -63,9 +65,40 @@ const data = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const pathname = usePathname()
+  const [hash, setHash] = React.useState("")
+
+  React.useEffect(() => {
+    const syncHash = () => {
+      setHash(window.location.hash)
+    }
+
+    syncHash()
+    window.addEventListener("hashchange", syncHash)
+    return () => window.removeEventListener("hashchange", syncHash)
+  }, [])
+
+  React.useEffect(() => {
+    setHash(window.location.hash)
+  }, [pathname])
+
+  const isNavItemActive = (title: string, url: string) => {
+    const routePath = url.split("#")[0]
+    if (title === "My Rooms") {
+      return pathname === "/dashboard" && hash !== "#recent-activity"
+    }
+    if (title === "Recent Activity") {
+      return pathname === "/dashboard" && hash === "#recent-activity"
+    }
+    if (title === "Saved Tasks") {
+      return pathname === "/dashboard/saved-tasks"
+    }
+    return pathname === routePath
+  }
+
   return (
     <Sidebar
-      collapsible="offcanvas"
+      collapsible="icon"
       {...props}
       style={
         {
@@ -77,7 +110,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           "--sidebar-ring": "var(--nook-accent)",
         } as React.CSSProperties
       }
-      className="border-[color:var(--nook-sidebar-border)] [&_[data-sidebar=sidebar-inner]]:bg-gradient-to-b [&_[data-sidebar=sidebar-inner]]:from-[var(--nook-sidebar-bg-start)] [&_[data-sidebar=sidebar-inner]]:to-[var(--nook-sidebar-bg-end)] [&_[data-sidebar=menu-button]]:text-[color:var(--nook-sidebar-foreground-muted)] [&_[data-sidebar=menu-button]:hover]:bg-[color:var(--nook-sidebar-active)] [&_[data-sidebar=menu-button]:hover]:text-[color:var(--nook-sidebar-foreground)] [&_[data-sidebar=menu-button][data-active=true]]:bg-[color:var(--nook-sidebar-active)] [&_[data-sidebar=menu-button][data-active=true]]:text-[color:var(--nook-sidebar-foreground)] [&_[data-sidebar=group-label]]:text-[color:var(--nook-sidebar-foreground-muted)] [&_[data-sidebar=separator]]:bg-[color:var(--nook-sidebar-border)]"
+      className="nook-border [&_[data-sidebar=sidebar-inner]]:bg-gradient-to-b [&_[data-sidebar=sidebar-inner]]:from-[var(--nook-sidebar-bg-start)] [&_[data-sidebar=sidebar-inner]]:to-[var(--nook-sidebar-bg-end)] [&_[data-sidebar=menu-button]]:text-[color:var(--nook-sidebar-foreground-muted)] [&_[data-sidebar=menu-button]:hover]:bg-[color:var(--nook-sidebar-active)] [&_[data-sidebar=menu-button]:hover]:text-[color:var(--nook-sidebar-foreground)] [&_[data-sidebar=menu-button][data-active=true]]:bg-[color:var(--nook-sidebar-active)] [&_[data-sidebar=menu-button][data-active=true]]:text-[color:var(--nook-sidebar-foreground)] [&_[data-sidebar=group-label]]:text-[color:var(--nook-sidebar-foreground-muted)] [&_[data-sidebar=separator]]:bg-[color:var(--nook-sidebar-border)]"
     >
       <SidebarHeader>
         <SidebarMenu>
@@ -97,7 +130,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
         <SidebarInput
           placeholder="Search rooms..."
-          className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] text-[color:var(--nook-sidebar-foreground)] placeholder:text-[color:var(--nook-sidebar-foreground-muted)] focus-visible:ring-[color:var(--nook-accent)]"
+          className="nook-input text-[color:var(--nook-sidebar-foreground)] group-data-[collapsible=icon]:hidden"
         />
       </SidebarHeader>
       <SidebarSeparator />
@@ -106,13 +139,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarGroupLabel>GENERAL</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {data.primaryNav.map((item, index) => (
+              {data.primaryNav.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={index === 0}>
-                    <a href={item.url}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isNavItemActive(item.title, item.url)}
+                  >
+                    <Link href={item.url}>
                       <item.icon />
                       <span>{item.title}</span>
-                    </a>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

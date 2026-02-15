@@ -153,3 +153,43 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  .nook-border {
+    border-color: var(--nook-sidebar-border);
+  }
+
+  .nook-input {
+    border-color: var(--nook-sidebar-border);
+    background-color: var(--nook-sidebar-input-bg);
+  }
+
+  .nook-input::placeholder {
+    color: var(--nook-sidebar-foreground-muted);
+  }
+
+  .nook-input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--nook-accent) 55%, transparent);
+  }
+
+  .nook-panel {
+    border: 1px solid var(--nook-sidebar-border);
+    background-color: color-mix(in oklch, var(--background) 72%, transparent);
+    backdrop-filter: blur(8px);
+  }
+
+  .nook-panel-soft {
+    border: 1px solid var(--nook-sidebar-border);
+    background-color: color-mix(in oklch, var(--background) 86%, transparent);
+  }
+
+  .nook-cta {
+    background-color: var(--nook-accent);
+    color: oklch(0.2 0 0);
+  }
+
+  .nook-cta:hover {
+    background-color: var(--nook-accent-strong);
+  }
+}
