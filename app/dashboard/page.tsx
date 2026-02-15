@@ -142,7 +142,7 @@ export default function Page() {
               </button>
             </div>
 
-            <div className="mt-10">
+            <div id="recent-activity" className="mt-10">
               <h2 className="text-2xl font-semibold">Recent Activity</h2>
               <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
                 <p className="text-sm text-muted-foreground">
