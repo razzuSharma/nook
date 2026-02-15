@@ -41,7 +41,7 @@ const data = {
     },
     {
       title: "Recent Activity",
-      url: "/dashboard#recent-activity",
+      url: "/dashboard/recent-activity",
       icon: Clock3,
     },
     {
@@ -66,29 +66,14 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
-  const [hash, setHash] = React.useState("")
-
-  React.useEffect(() => {
-    const syncHash = () => {
-      setHash(window.location.hash)
-    }
-
-    syncHash()
-    window.addEventListener("hashchange", syncHash)
-    return () => window.removeEventListener("hashchange", syncHash)
-  }, [])
-
-  React.useEffect(() => {
-    setHash(window.location.hash)
-  }, [pathname])
 
   const isNavItemActive = (title: string, url: string) => {
     const routePath = url.split("#")[0]
     if (title === "My Rooms") {
-      return pathname === "/dashboard" && hash !== "#recent-activity"
+      return pathname === "/dashboard"
     }
     if (title === "Recent Activity") {
-      return pathname === "/dashboard" && hash === "#recent-activity"
+      return pathname === "/dashboard/recent-activity"
     }
     if (title === "Saved Tasks") {
       return pathname === "/dashboard/saved-tasks"

@@ -1,4 +1,6 @@
 import { AppSidebar } from "@/components/app-sidebar"
+import { ActivityFeed } from "@/components/recent-activity/activity-feed"
+import { recentActivityItems } from "@/components/recent-activity/data"
 import { SiteHeader } from "@/components/site-header"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -142,14 +144,17 @@ export default function Page() {
               </button>
             </div>
 
-            <div id="recent-activity" className="mt-10">
-              <h2 className="text-2xl font-semibold">Recent Activity</h2>
-              <div className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-                <p className="text-sm text-muted-foreground">
-                  Alex opened <span className="font-medium text-foreground">React Wizards</span>{" "}
-                  12 minutes ago and started a deep work timer.
-                </p>
+            <div className="mt-10">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-2xl font-semibold">Recent Activity</h2>
+                <a
+                  href="/dashboard/recent-activity"
+                  className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300 dark:hover:text-cyan-200"
+                >
+                  View Timeline
+                </a>
               </div>
+              <ActivityFeed items={recentActivityItems} />
             </div>
           </div>
         </div>
