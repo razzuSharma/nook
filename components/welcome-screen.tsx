@@ -9,12 +9,12 @@ export function WelcomeScreen() {
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_20%_0%,color-mix(in_oklch,var(--nook-accent)_32%,transparent),transparent_38%),radial-gradient(circle_at_90%_10%,color-mix(in_oklch,var(--nook-accent-strong)_26%,transparent),transparent_36%),linear-gradient(180deg,var(--nook-surface)_0%,var(--background)_100%)] px-4 py-10">
       <div className="pointer-events-none absolute inset-0">
-        <div className="animate-[nook-float_9s_ease-in-out_infinite] absolute -top-24 left-1/2 size-80 -translate-x-1/2 rounded-full bg-[color:var(--nook-accent)]/20 blur-3xl" />
-        <div className="animate-[nook-float_11s_ease-in-out_infinite_reverse] absolute right-0 bottom-0 size-72 rounded-full bg-[color:var(--nook-accent-strong)]/15 blur-3xl" />
+        <div className="animate-[nook-float_9s_ease-in-out_infinite] absolute -top-24 left-1/2 size-80 -translate-x-1/2 rounded-full bg-(--nook-accent)/20 blur-3xl" />
+        <div className="animate-[nook-float_11s_ease-in-out_infinite_reverse] absolute right-0 bottom-0 size-72 rounded-full bg-(--nook-accent-strong)/15 blur-3xl" />
       </div>
 
       <section className="relative w-full max-w-3xl rounded-3xl border border-nook-sidebar-border bg-background/70 p-6 text-center shadow-2xl backdrop-blur-xl md:p-10">
-        <div className="animate-[nook-glow_2.6s_ease-in-out_infinite] mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-[color:var(--nook-accent)]/20 text-[color:var(--nook-accent-strong)]">
+        <div className="animate-[nook-glow_2.6s_ease-in-out_infinite] mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-(--nook-accent)/20 text-nook-accent-strong">
           <Sparkles className="size-5" />
         </div>
         <p className="text-sm font-medium tracking-wide text-muted-foreground">
@@ -32,16 +32,13 @@ export function WelcomeScreen() {
           <Button
             asChild
             size="lg"
-            className="group bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
+            className="group bg-nook-accent text-slate-950 hover:bg-nook-accent-strong"
           >
             <Link href="/dashboard">
-              Enter Dashboard
+              Enter the new world of cafe and code.
               <ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" />
             </Link>
           </Button>
-          <p className="text-xs text-muted-foreground">
-            Theme-aware intro screen enabled
-          </p>
         </div>
       </section>
 
