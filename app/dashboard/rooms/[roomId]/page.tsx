@@ -1,0 +1,140 @@
+"use client"
+
+import * as React from "react"
+import { useMutation, useQuery } from "convex/react"
+import Link from "next/link"
+import { useParams } from "next/navigation"
+import type { Id } from "@/convex/_generated/dataModel"
+
+import { AppSidebar } from "@/components/app-sidebar"
+import { RightSidebar } from "@/components/right-sidebar"
+import { SiteHeader } from "@/components/site-header"
+import { RoomTaskBoard } from "@/components/rooms/room-task-board"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { roomsApi } from "@/lib/convex-rooms-api"
+import {
+  SidebarInset,
+  SidebarProvider,
+} from "@/components/ui/sidebar"
+
+type RoomDoc = {
+  _id: Id<"rooms">
+  name: string
+  description: string
+  mode: string
+  membersCount: number
+  membersMax: number
+  joinCode?: string
+}
+
+export default function RoomPage() {
+  const params = useParams<{ roomId: string }>()
+  const roomId = params.roomId
+
+  const rooms = useQuery(roomsApi.list) as RoomDoc[] | undefined
+  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
+
+  React.useEffect(() => {
+    void ensureDefaults({})
+  }, [ensureDefaults])
+
+  const room = React.useMemo(
+    () => rooms?.find((item) => item._id === roomId),
+    [roomId, rooms]
+  )
+
+  return (
+    <SidebarProvider
+      style={
+        {
+          "--sidebar-width": "calc(var(--spacing) * 64)",
+          "--header-height": "calc(var(--spacing) * 12)",
+        } as React.CSSProperties
+      }
+    >
+      <AppSidebar variant="sidebar" />
+      <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
+        <SiteHeader currentPage={room ? room.name : "Room"} actionLabel="Invite" />
+        <div className="flex flex-1 flex-col px-4 py-5 md:px-6 md:py-6 lg:pr-20">
+          <div className="mx-auto w-full max-w-6xl space-y-5">
+            {!rooms ? (
+              <Card className="border-cyan-500/20 bg-background/70">
+                <CardContent className="py-8 text-sm text-muted-foreground">
+                  Loading room...
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {rooms && !room ? (
+              <Card className="border-red-500/20 bg-background/70">
+                <CardContent className="space-y-3 py-8">
+                  <p className="text-sm text-muted-foreground">Room not found.</p>
+                  <Link
+                    href="/dashboard"
+                    className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                  >
+                    Back to Dashboard
+                  </Link>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {room ? (
+              <>
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
+                    {room.name}
+                  </h1>
+                  <p className="mt-2 text-muted-foreground">{room.description}</p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <Card className="border-cyan-500/20 bg-cyan-500/5">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Mode</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Badge className="bg-cyan-500/20 text-cyan-800 dark:text-cyan-300">
+                        {room.mode}
+                      </Badge>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-cyan-500/20 bg-cyan-500/5">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Members</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold">
+                        {room.membersCount}/{room.membersMax}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-cyan-500/20 bg-cyan-500/5">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Join Code</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold">{room.joinCode ?? "N/A"}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="border-cyan-500/20 bg-background/70">
+                  <CardHeader>
+                    <CardTitle>Room Workspace</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm text-muted-foreground">
+                    <p>Manage room-specific work with assignees and status flow.</p>
+                  </CardContent>
+                </Card>
+                <RoomTaskBoard roomId={room._id} />
+              </>
+            ) : null}
+          </div>
+        </div>
+      </SidebarInset>
+      <RightSidebar />
+    </SidebarProvider>
+  )
+}

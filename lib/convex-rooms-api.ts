@@ -1,0 +1,57 @@
+import { api } from "@/convex/_generated/api"
+import type { FunctionReference } from "convex/server"
+import type { Id } from "@/convex/_generated/dataModel"
+
+type RoomsApiShape = {
+  list: FunctionReference<"query", "public", Record<string, never>, unknown>
+  ensureDefaults: FunctionReference<"mutation", "public", Record<string, never>, unknown>
+  joinedRoomIdsByUser: FunctionReference<
+    "query",
+    "public",
+    { userId: string },
+    unknown
+  >
+  pinnedRoomIdsByUser: FunctionReference<
+    "query",
+    "public",
+    { userId: string },
+    unknown
+  >
+  togglePin: FunctionReference<
+    "mutation",
+    "public",
+    { roomId: Id<"rooms">; userId: string },
+    { pinned: boolean }
+  >
+  joinByRoomId: FunctionReference<
+    "mutation",
+    "public",
+    { roomId: Id<"rooms">; userId: string },
+    { joined: boolean; roomId: Id<"rooms"> }
+  >
+  joinByCode: FunctionReference<
+    "mutation",
+    "public",
+    { code: string; userId: string },
+    { joined: boolean; roomId: Id<"rooms"> }
+  >
+  leaveRoom: FunctionReference<
+    "mutation",
+    "public",
+    { roomId: Id<"rooms">; userId: string },
+    { left: boolean }
+  >
+  create: FunctionReference<
+    "mutation",
+    "public",
+    {
+      name: string
+      description: string
+      mode: string
+      membersMax: number
+    },
+    unknown
+  >
+}
+
+export const roomsApi = (api as unknown as { rooms: RoomsApiShape }).rooms

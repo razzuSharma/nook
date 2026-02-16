@@ -1,8 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { Code2, Cpu, Plus, Rocket, Sparkles, type LucideIcon } from "lucide-react"
+import { useMutation, useQuery } from "convex/react"
+import {
+  Code2,
+  Cpu,
+  Pin,
+  Plus,
+  Rocket,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react"
+import { useRouter } from "next/navigation"
 
+import type { RoomIconKey } from "@/components/rooms/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,20 +26,16 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer"
 import { Input } from "@/components/ui/input"
-
-export type RoomIconKey = "code" | "rocket" | "cpu" | "sparkles"
-
-export type Room = {
-  id: string
-  name: string
-  description: string
-  mode: string
-  membersCount: number
-  membersMax: number
-  icon: RoomIconKey
-}
-
-const STORAGE_KEY = "nook.rooms.v1"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { roomsApi } from "@/lib/convex-rooms-api"
+import type { Id } from "@/convex/_generated/dataModel"
+import { DEMO_USER_ID } from "@/lib/demo-user"
 
 const iconMap: Record<RoomIconKey, LucideIcon> = {
   code: Code2,
@@ -37,40 +44,61 @@ const iconMap: Record<RoomIconKey, LucideIcon> = {
   sparkles: Sparkles,
 }
 
+type RoomListItem = {
+  _id: Id<"rooms">
+  name: string
+  description: string
+  mode: string
+  membersCount: number
+  membersMax: number
+  createdAt: number
+  joinCode?: string
+  icon: RoomIconKey
+}
+type RoomSort = "recent" | "mostJoined"
+
 function roomIcon(key: RoomIconKey) {
   return iconMap[key] ?? Sparkles
 }
 
-export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
-  const [rooms, setRooms] = React.useState<Room[]>(initialRooms)
+export function RoomsGrid() {
+  const router = useRouter()
+  const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
+  const joinedRoomIds = (useQuery(roomsApi.joinedRoomIdsByUser, {
+    userId: DEMO_USER_ID,
+  }) ?? []) as Id<"rooms">[]
+  const pinnedRoomIds = (useQuery(roomsApi.pinnedRoomIdsByUser, {
+    userId: DEMO_USER_ID,
+  }) ?? []) as Id<"rooms">[]
+  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
+  const createRoomInDb = useMutation(roomsApi.create)
+  const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
+  const joinByCodeInDb = useMutation(roomsApi.joinByCode)
+  const leaveRoomInDb = useMutation(roomsApi.leaveRoom)
+  const togglePinInDb = useMutation(roomsApi.togglePin)
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(false)
+  const [isJoinDrawerOpen, setIsJoinDrawerOpen] = React.useState(false)
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
   const [mode, setMode] = React.useState("")
   const [membersMax, setMembersMax] = React.useState("8")
-
-  React.useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw) as Room[]
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        setRooms(parsed)
-      }
-    } catch {
-      // Ignore malformed local storage data.
-    }
-  }, [])
-
-  React.useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms))
-  }, [rooms])
+  const [joinCode, setJoinCode] = React.useState("")
+  const [joinError, setJoinError] = React.useState<string | null>(null)
+  const [joinCandidate, setJoinCandidate] = React.useState<{
+    id: Id<"rooms">
+    name: string
+  } | null>(null)
+  const [sortBy, setSortBy] = React.useState<RoomSort>("recent")
 
   React.useEffect(() => {
     const openDrawer = () => setIsDrawerOpen(true)
     window.addEventListener("nook:create-room", openDrawer)
     return () => window.removeEventListener("nook:create-room", openDrawer)
   }, [])
+
+  React.useEffect(() => {
+    void ensureDefaults({})
+  }, [ensureDefaults])
 
   function resetForm() {
     setName("")
@@ -79,7 +107,7 @@ export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
     setMembersMax("8")
   }
 
-  function createRoom() {
+  async function createRoom() {
     const trimmedName = name.trim()
     const trimmedDescription = description.trim()
     const trimmedMode = mode.trim()
@@ -88,20 +116,64 @@ export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
       return
     }
 
-    const newRoom: Room = {
-      id: `room-${Date.now()}`,
+    await createRoomInDb({
       name: trimmedName,
       description: trimmedDescription,
-      mode: trimmedMode.toUpperCase(),
-      membersCount: 1,
-      membersMax: Math.min(Math.max(safeMax, 2), 30),
-      icon: "sparkles",
-    }
-
-    setRooms((prev) => [...prev, newRoom])
-    window.dispatchEvent(new Event("nook:rooms-updated"))
+      mode: trimmedMode,
+      membersMax: safeMax,
+    })
     resetForm()
     setIsDrawerOpen(false)
+  }
+
+  async function joinRoom(roomId: Id<"rooms">) {
+    try {
+      setJoinError(null)
+      const result = await joinRoomInDb({
+        roomId,
+        userId: DEMO_USER_ID,
+      })
+      router.push(`/dashboard/rooms/${result.roomId}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to join room."
+      setJoinError(message)
+    }
+  }
+
+  async function leaveRoom(roomId: Id<"rooms">) {
+    await leaveRoomInDb({
+      roomId,
+      userId: DEMO_USER_ID,
+    })
+  }
+
+  async function joinByCode() {
+    const trimmedCode = joinCode.trim().toUpperCase()
+    if (!trimmedCode) {
+      setJoinError("Join code is required.")
+      return
+    }
+
+    try {
+      setJoinError(null)
+      const result = await joinByCodeInDb({
+        code: trimmedCode,
+        userId: DEMO_USER_ID,
+      })
+      setJoinCode("")
+      setIsJoinDrawerOpen(false)
+      router.push(`/dashboard/rooms/${result.roomId}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to join with code."
+      setJoinError(message)
+    }
+  }
+
+  async function togglePin(roomId: Id<"rooms">) {
+    await togglePinInDb({
+      roomId,
+      userId: DEMO_USER_ID,
+    })
   }
 
   const canCreate =
@@ -110,28 +182,62 @@ export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
     mode.trim().length > 2 &&
     Number.parseInt(membersMax, 10) >= 2
 
+  const visibleRooms = React.useMemo(() => {
+    const sorted = [...(roomDocs ?? [])]
+    if (sortBy === "mostJoined") {
+      sorted.sort((left, right) => right.membersCount - left.membersCount)
+      return sorted
+    }
+    sorted.sort((left, right) => right.createdAt - left.createdAt)
+    return sorted
+  }, [roomDocs, sortBy])
+
   return (
     <>
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-2xl font-semibold">Your Rooms</h2>
-        <Button
-          type="button"
-          variant="ghost"
-          className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300 dark:hover:text-cyan-200"
-          onClick={() => setIsDrawerOpen(true)}
-        >
-          <Plus className="size-4" />
-          New Room
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select
+            value={sortBy}
+            onValueChange={(value) => setSortBy(value as RoomSort)}
+          >
+            <SelectTrigger className="w-[170px] border-cyan-500/25">
+              <SelectValue placeholder="Sort rooms" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Most Recent</SelectItem>
+              <SelectItem value="mostJoined">Most Joined</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            variant="outline"
+            className="border-cyan-500/30 text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-200"
+            onClick={() => setIsJoinDrawerOpen(true)}
+          >
+            Join by Code
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300 dark:hover:text-cyan-200"
+            onClick={() => setIsDrawerOpen(true)}
+          >
+            <Plus className="size-4" />
+            New Room
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {rooms.map((room) => {
+        {visibleRooms.map((room) => {
           const Icon = roomIcon(room.icon)
+          const isJoined = joinedRoomIds.includes(room._id)
+          const isPinned = pinnedRoomIds.includes(room._id)
           return (
             <article
-              key={room.id}
-              className="rounded-2xl border border-cyan-500/20 bg-slate-50/40 p-5 shadow-sm backdrop-blur dark:bg-slate-900/40"
+              key={room._id}
+              className="rounded-2xl border border-cyan-500/20 bg-slate-50/40 p-5 shadow-md transition-shadow hover:shadow-lg backdrop-blur dark:bg-slate-900/40"
             >
               <div className="mb-5 flex items-start justify-between">
                 <div className="rounded-lg bg-cyan-500/15 p-2 text-cyan-800 dark:text-cyan-300">
@@ -155,6 +261,58 @@ export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
                 <span className="text-sm text-muted-foreground">
                   {room.membersCount}/{room.membersMax} Members
                 </span>
+              </div>
+              <div className="mt-4 flex items-center gap-2">
+                {isJoined ? (
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                      Joined
+                    </Badge>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => router.push(`/dashboard/rooms/${room._id}`)}
+                    >
+                      Enter Room
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-red-500/30 text-red-700 hover:bg-red-500/10 dark:text-red-300"
+                      onClick={() => {
+                        void leaveRoom(room._id)
+                      }}
+                    >
+                      Leave
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                    onClick={() => setJoinCandidate({ id: room._id, name: room.name })}
+                  >
+                    Join Room
+                  </Button>
+                )}
+                {room.joinCode ? (
+                  <span className="text-xs text-muted-foreground">
+                    Code: {room.joinCode}
+                  </span>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className={isPinned ? "text-cyan-700 dark:text-cyan-300" : ""}
+                  onClick={() => togglePin(room._id)}
+                >
+                  <Pin className="size-4" />
+                  {isPinned ? "Pinned" : "Pin"}
+                </Button>
               </div>
             </article>
           )
@@ -257,6 +415,73 @@ export function RoomsGrid({ initialRooms }: { initialRooms: Room[] }) {
                 setIsDrawerOpen(false)
               }}
             >
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
+      <Drawer open={isJoinDrawerOpen} onOpenChange={setIsJoinDrawerOpen}>
+        <DrawerContent className="border-cyan-500/20">
+          <DrawerHeader>
+            <DrawerTitle>Join Room</DrawerTitle>
+            <DrawerDescription>
+              Enter a room code shared by your team.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="space-y-3 px-4 pb-2">
+            <Input
+              value={joinCode}
+              onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+              placeholder="NOOK-7F2A"
+              className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30"
+            />
+            {joinError ? (
+              <p className="text-sm text-red-600 dark:text-red-300">{joinError}</p>
+            ) : null}
+          </div>
+          <DrawerFooter>
+            <Button
+              onClick={joinByCode}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
+            >
+              Join
+            </Button>
+            <Button variant="outline" onClick={() => setIsJoinDrawerOpen(false)}>
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
+      <Drawer
+        open={Boolean(joinCandidate)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setJoinCandidate(null)
+          }
+        }}
+      >
+        <DrawerContent className="border-cyan-500/20">
+          <DrawerHeader>
+            <DrawerTitle>Confirm Join</DrawerTitle>
+            <DrawerDescription>
+              Join <span className="font-medium">{joinCandidate?.name}</span> and open
+              its workspace?
+            </DrawerDescription>
+          </DrawerHeader>
+          <DrawerFooter>
+            <Button
+              onClick={() => {
+                if (!joinCandidate) return
+                void joinRoom(joinCandidate.id)
+                setJoinCandidate(null)
+              }}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
+            >
+              Confirm Join
+            </Button>
+            <Button variant="outline" onClick={() => setJoinCandidate(null)}>
               Cancel
             </Button>
           </DrawerFooter>

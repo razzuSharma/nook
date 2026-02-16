@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import { useMutation, useQuery } from "convex/react"
 import {
   closestCorners,
   DndContext,
@@ -23,12 +22,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { Edit3, GripVertical, Plus, Trash2 } from "lucide-react"
+import { useMutation, useQuery } from "convex/react"
+import { Edit3, GripVertical, Plus, Trash2, UserRound } from "lucide-react"
 
+import type { Id } from "@/convex/_generated/dataModel"
+import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import {
   Drawer,
   DrawerContent,
@@ -37,6 +38,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -44,15 +46,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { tasksApi } from "@/lib/convex-tasks-api"
 import { cn } from "@/lib/utils"
-import type {
-  SavedTask,
-  TaskPriority,
-  TaskStatus,
-} from "@/components/saved-tasks/types"
 
-type TaskBoardState = Record<TaskStatus, SavedTask[]>
+type TaskStatus = "todo" | "working" | "completed"
+type TaskPriority = "low" | "medium" | "high"
+
+type RoomTask = {
+  id: string
+  title: string
+  note: string
+  assignee: string
+  priority: TaskPriority
+  status: TaskStatus
+}
+
+type TaskBoardState = Record<TaskStatus, RoomTask[]>
 
 const boardColumns: Array<{
   id: TaskStatus
@@ -60,13 +68,13 @@ const boardColumns: Array<{
   subtitle: string
 }> = [
   { id: "todo", label: "To Do", subtitle: "Planned next" },
-  { id: "working", label: "In Progress", subtitle: "Currently active" },
-  { id: "completed", label: "Completed", subtitle: "Recently shipped" },
+  { id: "working", label: "In Progress", subtitle: "Being built now" },
+  { id: "completed", label: "Completed", subtitle: "Done and verified" },
 ]
 
 const statusOrder: TaskStatus[] = ["todo", "working", "completed"]
 
-function toBoardState(tasks: SavedTask[]): TaskBoardState {
+function toBoardState(tasks: RoomTask[]): TaskBoardState {
   return {
     todo: tasks.filter((task) => task.status === "todo"),
     working: tasks.filter((task) => task.status === "working"),
@@ -74,23 +82,20 @@ function toBoardState(tasks: SavedTask[]): TaskBoardState {
   }
 }
 
-function flattenBoard(board: TaskBoardState): SavedTask[] {
+function flattenBoard(board: TaskBoardState): RoomTask[] {
   return statusOrder.flatMap((status) => board[status])
 }
 
-function tasksEqual(a: SavedTask[], b: SavedTask[]) {
+function tasksEqual(a: RoomTask[], b: RoomTask[]) {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i += 1) {
-    const left = a[i]
-    const right = b[i]
     if (
-      left.id !== right.id ||
-      left.title !== right.title ||
-      left.note !== right.note ||
-      left.dueDate !== right.dueDate ||
-      left.dueTime !== right.dueTime ||
-      left.priority !== right.priority ||
-      left.status !== right.status
+      a[i].id !== b[i].id ||
+      a[i].title !== b[i].title ||
+      a[i].note !== b[i].note ||
+      a[i].assignee !== b[i].assignee ||
+      a[i].priority !== b[i].priority ||
+      a[i].status !== b[i].status
     ) {
       return false
     }
@@ -99,48 +104,23 @@ function tasksEqual(a: SavedTask[], b: SavedTask[]) {
 }
 
 function priorityClass(priority: TaskPriority) {
-  if (priority === "high") {
-    return "bg-red-500/15 text-red-700 dark:text-red-300"
-  }
-
-  if (priority === "medium") {
-    return "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-  }
-
+  if (priority === "high") return "bg-red-500/15 text-red-700 dark:text-red-300"
+  if (priority === "medium") return "bg-amber-500/15 text-amber-700 dark:text-amber-300"
   return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
 }
 
 function cardStatusClass(status: TaskStatus) {
-  if (status === "completed") {
-    return "bg-emerald-500/12"
-  }
-  if (status === "working") {
-    return "bg-cyan-500/10"
-  }
+  if (status === "completed") return "bg-emerald-500/12"
+  if (status === "working") return "bg-cyan-500/10"
   return "bg-amber-500/10"
-}
-
-function formatDue(date: string, time: string) {
-  if (!date) return time || "No due time"
-  const parsed = new Date(`${date}T00:00:00`)
-  const safeDate = Number.isNaN(parsed.getTime())
-    ? date
-    : parsed.toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      })
-
-  return `${safeDate}${time ? ` at ${time}` : ""}`
 }
 
 function TaskCard({
   task,
   onEdit,
-  isDragging = false,
 }: {
-  task: SavedTask
-  onEdit: (task: SavedTask) => void
-  isDragging?: boolean
+  task: RoomTask
+  onEdit: (task: RoomTask) => void
 }) {
   const {
     attributes,
@@ -148,9 +128,7 @@ function TaskCard({
     setNodeRef,
     transform,
     transition,
-  } = useSortable({
-    id: task.id,
-  })
+  } = useSortable({ id: task.id })
 
   return (
     <article
@@ -161,8 +139,7 @@ function TaskCard({
       }}
       className={cn(
         "cursor-grab rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3 active:cursor-grabbing",
-        cardStatusClass(task.status),
-        isDragging && "opacity-70 shadow-md"
+        cardStatusClass(task.status)
       )}
       {...attributes}
       {...listeners}
@@ -193,10 +170,11 @@ function TaskCard({
       </div>
       <p className="text-xs text-muted-foreground">{task.note}</p>
       <div className="mt-3 flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          Due: {formatDue(task.dueDate, task.dueTime)}
-        </span>
-        <span className="text-xs text-muted-foreground">Drag with mouse</span>
+        <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+          <UserRound className="size-3.5" />
+          {task.assignee || "Unassigned"}
+        </div>
+        <span className="text-xs text-muted-foreground">Drag to reorder</span>
       </div>
     </article>
   )
@@ -210,7 +188,6 @@ function ColumnDropZone({
   children: React.ReactNode
 }) {
   const { setNodeRef, isOver } = useDroppable({ id })
-
   return (
     <section
       ref={setNodeRef}
@@ -224,67 +201,79 @@ function ColumnDropZone({
   )
 }
 
-export function TaskBoard() {
-  const tasksFromDb = useQuery(tasksApi.list) as
-    | Array<
-        SavedTask & {
-          _id: string
-          taskId: string
-          order: number
-        }
-      >
+export function RoomTaskBoard({ roomId }: { roomId: Id<"rooms"> }) {
+  const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
+    | Array<{
+        taskId: string
+        title: string
+        note: string
+        assignee: string
+        priority: TaskPriority
+        status: TaskStatus
+      }>
     | undefined
-  const ensureDefaults = useMutation(tasksApi.ensureDefaults)
-  const syncTasks = useMutation(tasksApi.sync)
+  const syncByRoom = useMutation(roomTasksApi.syncByRoom)
+
   const serverTasks = React.useMemo(() => {
-    if (!tasksFromDb) return []
-    return tasksFromDb.map((task) => ({
+    if (!docs) return []
+    return docs.map((task) => ({
       id: task.taskId,
       title: task.title,
       note: task.note,
-      dueDate: task.dueDate,
-      dueTime: task.dueTime,
+      assignee: task.assignee,
       priority: task.priority,
       status: task.status,
     }))
-  }, [tasksFromDb])
+  }, [docs])
+
   const [board, setBoard] = React.useState<TaskBoardState>(() => toBoardState([]))
   const [draftTitle, setDraftTitle] = React.useState("")
   const [draftNote, setDraftNote] = React.useState("")
-  const [draftDueDate, setDraftDueDate] = React.useState("")
-  const [draftDueTime, setDraftDueTime] = React.useState("")
+  const [draftAssignee, setDraftAssignee] = React.useState("")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null)
   const [editTitle, setEditTitle] = React.useState("")
   const [editNote, setEditNote] = React.useState("")
-  const [editDueDate, setEditDueDate] = React.useState("")
-  const [editDueTime, setEditDueTime] = React.useState("")
+  const [editAssignee, setEditAssignee] = React.useState("")
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("medium")
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
+
+  React.useEffect(() => {
+    const boardTasks = flattenBoard(board)
+    if (!tasksEqual(boardTasks, serverTasks)) {
+      setBoard(toBoardState(serverTasks))
+    }
+  }, [board, serverTasks])
+
+  function persist(next: TaskBoardState) {
+    const payload = flattenBoard(next).map((task, index) => ({
+      taskId: task.id,
+      title: task.title,
+      note: task.note,
+      assignee: task.assignee,
+      priority: task.priority,
+      status: task.status,
+      order: index,
+    }))
+    void syncByRoom({
+      roomId,
+      tasks: payload,
+    })
+  }
 
   const findContainer = React.useCallback(
     (id: UniqueIdentifier): TaskStatus | null => {
       const value = String(id)
-      if (statusOrder.includes(value as TaskStatus)) {
-        return value as TaskStatus
-      }
-
+      if (statusOrder.includes(value as TaskStatus)) return value as TaskStatus
       for (const status of statusOrder) {
-        if (board[status].some((task) => task.id === value)) {
-          return status
-        }
+        if (board[status].some((task) => task.id === value)) return status
       }
-
       return null
     },
     [board]
@@ -293,8 +282,8 @@ export function TaskBoard() {
   const activeTask = React.useMemo(() => {
     if (!activeId) return null
     for (const status of statusOrder) {
-      const found = board[status].find((task) => task.id === activeId)
-      if (found) return found
+      const task = board[status].find((item) => item.id === activeId)
+      if (task) return task
     }
     return null
   }, [activeId, board])
@@ -302,49 +291,22 @@ export function TaskBoard() {
   const editingTask = React.useMemo(() => {
     if (!editingTaskId) return null
     for (const status of statusOrder) {
-      const found = board[status].find((task) => task.id === editingTaskId)
-      if (found) return found
+      const task = board[status].find((item) => item.id === editingTaskId)
+      if (task) return task
     }
     return null
   }, [editingTaskId, board])
 
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
-
-  React.useEffect(() => {
-    if (!tasksFromDb) return
-    const boardTasks = flattenBoard(board)
-    if (!tasksEqual(boardTasks, serverTasks)) {
-      setBoard(toBoardState(serverTasks))
-    }
-  }, [board, serverTasks, tasksFromDb])
-
-  function persistBoard(next: TaskBoardState) {
-    const serialized = flattenBoard(next).map((task, index) => ({
-      taskId: task.id,
-      title: task.title,
-      note: task.note,
-      dueDate: task.dueDate,
-      dueTime: task.dueTime,
-      priority: task.priority,
-      status: task.status,
-      order: index,
-    }))
-    void syncTasks({ tasks: serialized })
-  }
-
   function addTask() {
     const title = draftTitle.trim()
     const note = draftNote.trim()
-    if (!title || !note || !draftDueDate || !draftDueTime) return
+    if (!title || !note) return
 
-    const newTask: SavedTask = {
-      id: `t-${Date.now()}`,
+    const task: RoomTask = {
+      id: `rt-${Date.now()}`,
       title,
       note,
-      dueDate: draftDueDate,
-      dueTime: draftDueTime,
+      assignee: draftAssignee.trim(),
       priority: draftPriority,
       status: "todo",
     }
@@ -352,66 +314,52 @@ export function TaskBoard() {
     setBoard((prev) => {
       const next = {
         ...prev,
-        todo: [newTask, ...prev.todo],
+        todo: [task, ...prev.todo],
       }
-      persistBoard(next)
+      persist(next)
       return next
     })
     setDraftTitle("")
     setDraftNote("")
-    setDraftDueDate("")
-    setDraftDueTime("")
+    setDraftAssignee("")
     setDraftPriority("medium")
   }
 
-  function openEdit(task: SavedTask) {
+  function openEdit(task: RoomTask) {
     setEditingTaskId(task.id)
     setEditTitle(task.title)
     setEditNote(task.note)
-    setEditDueDate(task.dueDate)
-    setEditDueTime(task.dueTime)
+    setEditAssignee(task.assignee)
     setEditPriority(task.priority)
     setEditStatus(task.status)
   }
 
   function saveTaskEdit() {
     if (!editingTaskId) return
-
     const nextStatus = editStatus
 
     setBoard((prev) => {
       const next = { ...prev }
-      let sourceTask: SavedTask | null = null
-
+      let updated: RoomTask | null = null
       for (const status of statusOrder) {
         next[status] = prev[status].filter((task) => {
           if (task.id !== editingTaskId) return true
-          sourceTask = {
+          updated = {
             ...task,
             title: editTitle.trim() || task.title,
             note: editNote.trim() || task.note,
-            dueDate: editDueDate.trim() || task.dueDate,
-            dueTime: editDueTime.trim() || task.dueTime,
+            assignee: editAssignee.trim(),
             priority: editPriority,
             status: nextStatus,
           }
           return false
         })
       }
-
-      if (!sourceTask) {
-        return prev
-      }
-
-      next[nextStatus] = [sourceTask, ...next[nextStatus]].filter(
-        (task, index, arr) =>
-          arr.findIndex((candidate) => candidate.id === task.id) === index
-      )
-
-      persistBoard(next)
+      if (!updated) return prev
+      next[nextStatus] = [updated, ...next[nextStatus]]
+      persist(next)
       return next
     })
-
     setEditingTaskId(null)
   }
 
@@ -421,7 +369,7 @@ export function TaskBoard() {
       for (const status of statusOrder) {
         next[status] = prev[status].filter((task) => task.id !== taskId)
       }
-      persistBoard(next)
+      persist(next)
       return next
     })
     setEditingTaskId(null)
@@ -434,7 +382,6 @@ export function TaskBoard() {
   function onDragEnd(event: DragEndEvent) {
     setActiveId(null)
     const { active, over } = event
-
     if (!over) return
 
     const activeContainer = findContainer(active.id)
@@ -447,12 +394,11 @@ export function TaskBoard() {
         const oldIndex = items.findIndex((task) => task.id === String(active.id))
         const overIndex = items.findIndex((task) => task.id === String(over.id))
         if (oldIndex < 0 || overIndex < 0 || oldIndex === overIndex) return prev
-
         const next = {
           ...prev,
           [activeContainer]: arrayMove(items, oldIndex, overIndex),
         }
-        persistBoard(next)
+        persist(next)
         return next
       })
       return
@@ -461,11 +407,8 @@ export function TaskBoard() {
     setBoard((prev) => {
       const sourceItems = [...prev[activeContainer]]
       const targetItems = [...prev[overContainer]]
-      const sourceIndex = sourceItems.findIndex(
-        (task) => task.id === String(active.id)
-      )
+      const sourceIndex = sourceItems.findIndex((task) => task.id === String(active.id))
       if (sourceIndex < 0) return prev
-
       const [moved] = sourceItems.splice(sourceIndex, 1)
       const overId = String(over.id)
       const overIsColumn = overId === overContainer
@@ -473,87 +416,66 @@ export function TaskBoard() {
         ? targetItems.length
         : targetItems.findIndex((task) => task.id === overId)
       const insertAt = targetIndex < 0 ? targetItems.length : targetIndex
-
       targetItems.splice(insertAt, 0, { ...moved, status: overContainer })
-
       const next = {
         ...prev,
         [activeContainer]: sourceItems,
         [overContainer]: targetItems,
       }
-      persistBoard(next)
+      persist(next)
       return next
     })
   }
 
-  const canAddTask =
-    draftTitle.trim().length > 0 &&
-    draftNote.trim().length > 0 &&
-    draftDueDate.length > 0 &&
-    draftDueTime.length > 0
+  const canAddTask = draftTitle.trim().length > 0 && draftNote.trim().length > 0
 
   return (
     <div className="space-y-5">
       <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
         <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Quick Add Task</CardTitle>
+          <CardTitle className="text-lg">Add Room Task</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
+        <CardContent className="space-y-3">
+          <Input
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
+            placeholder="Task title"
+            className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+          />
+          <textarea
+            value={draftNote}
+            onChange={(event) => setDraftNote(event.target.value)}
+            placeholder="What needs to be done?"
+            className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
+          />
+          <div className="grid gap-3 md:grid-cols-3">
             <Input
-              value={draftTitle}
-              onChange={(event) => setDraftTitle(event.target.value)}
-              placeholder="Task title"
+              value={draftAssignee}
+              onChange={(event) => setDraftAssignee(event.target.value)}
+              placeholder="Assign to (name)"
               className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
             />
-            <textarea
-              value={draftNote}
-              onChange={(event) => setDraftNote(event.target.value)}
-              placeholder="Task description"
-              className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
-            />
-            <div className="grid gap-3 md:grid-cols-4">
-              <Input
-                type="date"
-                value={draftDueDate}
-                onChange={(event) => setDraftDueDate(event.target.value)}
-                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-              />
-              <Input
-                type="time"
-                value={draftDueTime}
-                onChange={(event) => setDraftDueTime(event.target.value)}
-                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-              />
-              <Select
-                value={draftPriority}
-                onValueChange={(value) => setDraftPriority(value as TaskPriority)}
-              >
-                <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
-                  <SelectValue placeholder="Priority" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                type="button"
-                onClick={addTask}
-                disabled={!canAddTask}
-                className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
-              >
-                <Plus />
-                Add Task
-              </Button>
-            </div>
+            <Select
+              value={draftPriority}
+              onValueChange={(value) => setDraftPriority(value as TaskPriority)}
+            >
+              <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                <SelectValue placeholder="Priority" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low">Low</SelectItem>
+                <SelectItem value="medium">Medium</SelectItem>
+                <SelectItem value="high">High</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               type="button"
-              variant="ghost"
-              className="h-auto justify-start px-0 text-xs text-muted-foreground hover:bg-transparent"
+              onClick={addTask}
+              disabled={!canAddTask}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
             >
-              Fill title, description, date, and time to add a task.
+              <Plus />
+              Add Task
             </Button>
           </div>
         </CardContent>
@@ -567,8 +489,7 @@ export function TaskBoard() {
       >
         <div className="grid gap-4 lg:grid-cols-3">
           {boardColumns.map((column) => {
-            const columnTasks = board[column.id]
-
+            const items = board[column.id]
             return (
               <ColumnDropZone key={column.id} id={column.id}>
                 <div className="mb-3 flex items-start justify-between">
@@ -576,21 +497,19 @@ export function TaskBoard() {
                     <h3 className="text-base font-semibold">{column.label}</h3>
                     <p className="text-xs text-muted-foreground">{column.subtitle}</p>
                   </div>
-                  <Badge variant="secondary">{columnTasks.length}</Badge>
+                  <Badge variant="secondary">{items.length}</Badge>
                 </div>
-
                 <SortableContext
-                  items={columnTasks.map((task) => task.id)}
+                  items={items.map((task) => task.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   <div className="space-y-3">
-                    {columnTasks.length === 0 && (
+                    {items.length === 0 ? (
                       <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-6 text-center text-sm text-muted-foreground">
-                        No tasks here yet
+                        No tasks yet
                       </p>
-                    )}
-
-                    {columnTasks.map((task) => (
+                    ) : null}
+                    {items.map((task) => (
                       <TaskCard key={task.id} task={task} onEdit={openEdit} />
                     ))}
                   </div>
@@ -599,7 +518,6 @@ export function TaskBoard() {
             )
           })}
         </div>
-
         <DragOverlay>
           {activeTask ? (
             <article className="w-[280px] rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/95 p-3 shadow-xl">
@@ -611,7 +529,7 @@ export function TaskBoard() {
               </div>
               <p className="text-xs text-muted-foreground">{activeTask.note}</p>
               <p className="mt-2 text-xs text-muted-foreground">
-                Due: {formatDue(activeTask.dueDate, activeTask.dueTime)}
+                Assigned: {activeTask.assignee || "Unassigned"}
               </p>
             </article>
           ) : null}
@@ -626,60 +544,35 @@ export function TaskBoard() {
       >
         <DrawerContent>
           <DrawerHeader>
-            <DrawerTitle>Edit Task</DrawerTitle>
-            <DrawerDescription>
-              Update task details and keep your board current.
-            </DrawerDescription>
+            <DrawerTitle>Edit Room Task</DrawerTitle>
+            <DrawerDescription>Update details and assignee.</DrawerDescription>
           </DrawerHeader>
           <div className="space-y-4 px-4 pb-2">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Title</p>
-              <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Note</p>
-              <textarea
-                value={editNote}
-                onChange={(e) => setEditNote(e.target.value)}
-                className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Due Date</p>
-                <Input
-                  type="date"
-                  value={editDueDate}
-                  onChange={(e) => setEditDueDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Time</p>
-                <Input
-                  type="time"
-                  value={editDueTime}
-                  onChange={(e) => setEditDueTime(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Priority</p>
-                <Select
-                  value={editPriority}
-                  onValueChange={(value) => setEditPriority(value as TaskPriority)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Priority" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Status</p>
+            <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
+            <textarea
+              value={editNote}
+              onChange={(event) => setEditNote(event.target.value)}
+              className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <Input
+              value={editAssignee}
+              onChange={(event) => setEditAssignee(event.target.value)}
+              placeholder="Assign to (name)"
+            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Select
+                value={editPriority}
+                onValueChange={(value) => setEditPriority(value as TaskPriority)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
               <Select
                 value={editStatus}
                 onValueChange={(value) => setEditStatus(value as TaskStatus)}

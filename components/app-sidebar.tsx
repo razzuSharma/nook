@@ -1,9 +1,11 @@
 "use client"
 
 import * as React from "react"
+import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
+  BarChart3,
   BookmarkCheck,
   Clock3,
   Command,
@@ -11,7 +13,19 @@ import {
   Timer,
   Users,
 } from "lucide-react"
-import type { Room } from "@/components/rooms/rooms-grid"
+import { defaultRooms } from "@/components/rooms/types"
+import type { Id } from "@/convex/_generated/dataModel"
+import { DEMO_USER_ID } from "@/lib/demo-user"
+import { roomsApi } from "@/lib/convex-rooms-api"
+import { Button } from "@/components/ui/button"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 
 import { NavUser } from "@/components/nav-user"
 import {
@@ -51,6 +65,11 @@ const data = {
       url: "/dashboard/saved-tasks",
       icon: BookmarkCheck,
     },
+    {
+      title: "Progress",
+      url: "/dashboard/progress",
+      icon: BarChart3,
+    },
   ],
   modes: [
     {
@@ -71,38 +90,67 @@ const data = {
       icon: Sparkles,
     },
   ],
-  roomNames: ["React Wizards", "SaaS Builders", "Rust Study Group"],
 }
 
-const ROOM_STORAGE_KEY = "nook.rooms.v1"
+type RoomListItem = {
+  _id: Id<"rooms">
+  name: string
+}
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const router = useRouter()
   const pathname = usePathname()
-  const [roomNames, setRoomNames] = React.useState<string[]>(data.roomNames)
+  const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
+  const joinedRoomIds = (useQuery(roomsApi.joinedRoomIdsByUser, {
+    userId: DEMO_USER_ID,
+  }) ?? []) as Id<"rooms">[]
+  const pinnedRoomIdsQuery = useQuery(roomsApi.pinnedRoomIdsByUser, {
+    userId: DEMO_USER_ID,
+  }) as Id<"rooms">[] | undefined
+  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
+  const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
+  const leaveRoomInDb = useMutation(roomsApi.leaveRoom)
+  const roomNames = React.useMemo(() => {
+    if (!roomDocs || roomDocs.length === 0) {
+      return defaultRooms.map((room) => room.name)
+    }
+    return roomDocs.map((room) => room.name)
+  }, [roomDocs])
+  const pinnedRooms = React.useMemo(
+    () =>
+      (roomDocs ?? []).filter((room) =>
+        (pinnedRoomIdsQuery ?? []).includes(room._id)
+      ),
+    [pinnedRoomIdsQuery, roomDocs]
+  )
 
   React.useEffect(() => {
-    const syncRoomNames = () => {
-      try {
-        const raw = window.localStorage.getItem(ROOM_STORAGE_KEY)
-        if (!raw) return
-        const parsed = JSON.parse(raw) as Room[]
-        if (!Array.isArray(parsed) || parsed.length === 0) return
+    void ensureDefaults({})
+  }, [ensureDefaults])
 
-        const merged = [...data.roomNames]
-        for (const room of parsed) {
-          if (!room?.name || merged.includes(room.name)) continue
-          merged.push(room.name)
-        }
-        setRoomNames(merged)
-      } catch {
-        // Ignore malformed local storage data.
-      }
-    }
+  const [joinCandidate, setJoinCandidate] = React.useState<{
+    id: Id<"rooms">
+    name: string
+  } | null>(null)
 
-    syncRoomNames()
-    window.addEventListener("nook:rooms-updated", syncRoomNames)
-    return () => window.removeEventListener("nook:rooms-updated", syncRoomNames)
-  }, [])
+  async function openRoom(roomId: Id<"rooms">) {
+    router.push(`/dashboard/rooms/${roomId}`)
+  }
+
+  async function joinRoom(roomId: Id<"rooms">) {
+    await joinRoomInDb({
+      roomId,
+      userId: DEMO_USER_ID,
+    })
+    router.push(`/dashboard/rooms/${roomId}`)
+  }
+
+  async function leaveRoom(roomId: Id<"rooms">) {
+    await leaveRoomInDb({
+      roomId,
+      userId: DEMO_USER_ID,
+    })
+  }
 
   const isNavItemActive = (title: string, url: string) => {
     const routePath = url.split("#")[0]
@@ -117,6 +165,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
     if (title === "Focus Mode") {
       return pathname === "/dashboard/focus"
+    }
+    if (title === "Progress") {
+      return pathname === "/dashboard/progress"
     }
     return pathname === routePath
   }
@@ -201,19 +252,106 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>MY ROOMS</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupLabel>PINNED</SidebarGroupLabel>
+          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
             <SidebarMenu>
-              {roomNames.map((name) => (
-                <SidebarMenuItem key={name}>
-                  <SidebarMenuButton asChild>
-                    <a href="#">
-                      <Users />
-                      <span>{name}</span>
-                    </a>
+              {pinnedRooms.length === 0 ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton>
+                    <span>No pinned rooms</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+              ) : (
+                pinnedRooms.map((room) => (
+                  <SidebarMenuItem key={room._id}>
+                    <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1">
+                      <span className="inline-flex items-center gap-2 text-sm">
+                        <Sparkles className="size-4" />
+                        <span>{room.name}</span>
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 border-cyan-500/25 px-2 text-[11px]"
+                        onClick={() => {
+                          void openRoom(room._id)
+                        }}
+                      >
+                        Enter
+                      </Button>
+                    </div>
+                  </SidebarMenuItem>
+                ))
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>MY ROOMS</SidebarGroupLabel>
+          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
+            <SidebarMenu>
+              {roomDocs?.map((room) => (
+                <SidebarMenuItem key={room._id}>
+                  <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1">
+                    <span className="inline-flex min-w-0 items-center gap-2 text-sm">
+                      <Users className="size-4 shrink-0" />
+                      <span className="truncate">{room.name}</span>
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {joinedRoomIds.includes(room._id) ? (
+                        <>
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-300">
+                            Joined
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-cyan-500/25 px-2 text-[11px]"
+                            onClick={() => {
+                              void openRoom(room._id)
+                            }}
+                          >
+                            Enter
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-red-500/25 px-2 text-[11px] text-red-700 hover:bg-red-500/10 dark:text-red-300"
+                            onClick={() => {
+                              void leaveRoom(room._id)
+                            }}
+                          >
+                            Leave
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          className="h-7 bg-cyan-500 px-2 text-[11px] text-slate-950 hover:bg-cyan-400"
+                          onClick={() =>
+                            setJoinCandidate({
+                              id: room._id,
+                              name: room.name,
+                            })
+                          }
+                        >
+                          Join
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </SidebarMenuItem>
               ))}
+              {!roomDocs?.length
+                ? roomNames.map((name) => (
+                    <SidebarMenuItem key={name}>
+                      <SidebarMenuButton>
+                        <Users />
+                        <span>{name}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))
+                : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -242,6 +380,38 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <NavUser user={data.user} />
       </SidebarFooter>
+
+      <Drawer
+        open={Boolean(joinCandidate)}
+        onOpenChange={(open) => {
+          if (!open) setJoinCandidate(null)
+        }}
+      >
+        <DrawerContent className="border-cyan-500/20">
+          <DrawerHeader>
+            <DrawerTitle>Confirm Join</DrawerTitle>
+            <DrawerDescription>
+              Join <span className="font-medium">{joinCandidate?.name}</span> and
+              open the room?
+            </DrawerDescription>
+          </DrawerHeader>
+          <DrawerFooter>
+            <Button
+              onClick={() => {
+                if (!joinCandidate) return
+                void joinRoom(joinCandidate.id)
+                setJoinCandidate(null)
+              }}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
+            >
+              Confirm Join
+            </Button>
+            <Button variant="outline" onClick={() => setJoinCandidate(null)}>
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </Sidebar>
   )
 }
