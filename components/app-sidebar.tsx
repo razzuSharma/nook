@@ -11,6 +11,7 @@ import {
   Timer,
   Users,
 } from "lucide-react"
+import type { Room } from "@/components/rooms/rooms-grid"
 
 import { NavUser } from "@/components/nav-user"
 import {
@@ -70,10 +71,38 @@ const data = {
       icon: Sparkles,
     },
   ],
+  roomNames: ["React Wizards", "SaaS Builders", "Rust Study Group"],
 }
+
+const ROOM_STORAGE_KEY = "nook.rooms.v1"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
+  const [roomNames, setRoomNames] = React.useState<string[]>(data.roomNames)
+
+  React.useEffect(() => {
+    const syncRoomNames = () => {
+      try {
+        const raw = window.localStorage.getItem(ROOM_STORAGE_KEY)
+        if (!raw) return
+        const parsed = JSON.parse(raw) as Room[]
+        if (!Array.isArray(parsed) || parsed.length === 0) return
+
+        const merged = [...data.roomNames]
+        for (const room of parsed) {
+          if (!room?.name || merged.includes(room.name)) continue
+          merged.push(room.name)
+        }
+        setRoomNames(merged)
+      } catch {
+        // Ignore malformed local storage data.
+      }
+    }
+
+    syncRoomNames()
+    window.addEventListener("nook:rooms-updated", syncRoomNames)
+    return () => window.removeEventListener("nook:rooms-updated", syncRoomNames)
+  }, [])
 
   const isNavItemActive = (title: string, url: string) => {
     const routePath = url.split("#")[0]
@@ -165,6 +194,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       <item.icon />
                       <span>{item.title}</span>
                     </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>MY ROOMS</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {roomNames.map((name) => (
+                <SidebarMenuItem key={name}>
+                  <SidebarMenuButton asChild>
+                    <a href="#">
+                      <Users />
+                      <span>{name}</span>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

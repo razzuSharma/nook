@@ -22,7 +22,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { Edit3, GripVertical, Plus } from "lucide-react"
+import { Edit3, GripVertical, Plus, Trash2 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +63,7 @@ const boardColumns: Array<{
 ]
 
 const statusOrder: TaskStatus[] = ["todo", "working", "completed"]
+const STORAGE_KEY = "nook.saved-tasks.v1"
 
 function toBoardState(tasks: SavedTask[]): TaskBoardState {
   return {
@@ -70,6 +71,10 @@ function toBoardState(tasks: SavedTask[]): TaskBoardState {
     working: tasks.filter((task) => task.status === "working"),
     completed: tasks.filter((task) => task.status === "completed"),
   }
+}
+
+function flattenBoard(board: TaskBoardState): SavedTask[] {
+  return statusOrder.flatMap((status) => board[status])
 }
 
 function priorityClass(priority: TaskPriority) {
@@ -214,6 +219,7 @@ export function TaskBoard({ initialTasks }: { initialTasks: SavedTask[] }) {
   const [editDueDate, setEditDueDate] = React.useState("")
   const [editDueTime, setEditDueTime] = React.useState("")
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("medium")
+  const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -260,6 +266,23 @@ export function TaskBoard({ initialTasks }: { initialTasks: SavedTask[] }) {
     return null
   }, [editingTaskId, board])
 
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as SavedTask[]
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setBoard(toBoardState(parsed))
+      }
+    } catch {
+      // Ignore malformed local storage data.
+    }
+  }, [])
+
+  React.useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(flattenBoard(board)))
+  }, [board])
+
   function addTask() {
     const title = draftTitle.trim()
     const note = draftNote.trim()
@@ -293,30 +316,57 @@ export function TaskBoard({ initialTasks }: { initialTasks: SavedTask[] }) {
     setEditDueDate(task.dueDate)
     setEditDueTime(task.dueTime)
     setEditPriority(task.priority)
+    setEditStatus(task.status)
   }
 
   function saveTaskEdit() {
     if (!editingTaskId) return
 
+    const nextStatus = editStatus
+
     setBoard((prev) => {
       const next = { ...prev }
+      let sourceTask: SavedTask | null = null
+
       for (const status of statusOrder) {
-        next[status] = prev[status].map((task) =>
-          task.id === editingTaskId
-            ? {
-                ...task,
-                title: editTitle.trim() || task.title,
-                note: editNote.trim() || task.note,
-                dueDate: editDueDate.trim() || task.dueDate,
-                dueTime: editDueTime.trim() || task.dueTime,
-                priority: editPriority,
-              }
-            : task
-        )
+        next[status] = prev[status].filter((task) => {
+          if (task.id !== editingTaskId) return true
+          sourceTask = {
+            ...task,
+            title: editTitle.trim() || task.title,
+            note: editNote.trim() || task.note,
+            dueDate: editDueDate.trim() || task.dueDate,
+            dueTime: editDueTime.trim() || task.dueTime,
+            priority: editPriority,
+            status: nextStatus,
+          }
+          return false
+        })
       }
+
+      if (!sourceTask) {
+        return prev
+      }
+
+      next[nextStatus] = [sourceTask, ...next[nextStatus]].filter(
+        (task, index, arr) =>
+          arr.findIndex((candidate) => candidate.id === task.id) === index
+      )
+
       return next
     })
 
+    setEditingTaskId(null)
+  }
+
+  function deleteTask(taskId: string) {
+    setBoard((prev) => {
+      const next = { ...prev }
+      for (const status of statusOrder) {
+        next[status] = prev[status].filter((task) => task.id !== taskId)
+      }
+      return next
+    })
     setEditingTaskId(null)
   }
 
@@ -567,6 +617,22 @@ export function TaskBoard({ initialTasks }: { initialTasks: SavedTask[] }) {
                 </Select>
               </div>
             </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Status</p>
+              <Select
+                value={editStatus}
+                onValueChange={(value) => setEditStatus(value as TaskStatus)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todo">To Do</SelectItem>
+                  <SelectItem value="working">In Progress</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DrawerFooter>
             <Button
@@ -575,6 +641,12 @@ export function TaskBoard({ initialTasks }: { initialTasks: SavedTask[] }) {
             >
               Save Changes
             </Button>
+            {editingTask ? (
+              <Button variant="outline" onClick={() => deleteTask(editingTask.id)}>
+                <Trash2 />
+                Delete Task
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setEditingTaskId(null)}>
               Cancel
             </Button>
