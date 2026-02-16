@@ -8,6 +8,7 @@ import {
   Clock3,
   Command,
   Sparkles,
+  Timer,
   Users,
 } from "lucide-react"
 
@@ -50,6 +51,13 @@ const data = {
       icon: BookmarkCheck,
     },
   ],
+  modes: [
+    {
+      title: "Focus Mode",
+      url: "/dashboard/focus",
+      icon: Timer,
+    },
+  ],
   teams: [
     {
       title: "Kore API",
@@ -77,6 +85,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
     if (title === "Saved Tasks") {
       return pathname === "/dashboard/saved-tasks"
+    }
+    if (title === "Focus Mode") {
+      return pathname === "/dashboard/focus"
     }
     return pathname === routePath
   }
@@ -125,6 +136,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarGroupContent>
             <SidebarMenu>
               {data.primaryNav.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isNavItemActive(item.title, item.url)}
+                  >
+                    <Link href={item.url}>
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>MODES</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {data.modes.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild

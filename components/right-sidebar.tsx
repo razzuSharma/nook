@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bell, Calendar, Timer, CircleHelp } from "lucide-react"
+import { Bell, Calendar, CircleHelp } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -14,7 +14,6 @@ export function RightSidebar() {
     const actions = [
         { icon: Bell, label: "Notifications" },
         { icon: Calendar, label: "Calendar" },
-        { icon: Timer, label: "Focus Mode" },
     ]
 
     return (
