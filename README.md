@@ -8,11 +8,6 @@
 
 ## **Preview**
 
-> Add your app screenshot here:
-
-![Nook App Preview](./public/readme-preview.png)
-
-Create or replace this file with your screenshot:
 `public/readme-preview.png`
 
 ---
