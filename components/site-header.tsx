@@ -13,7 +13,7 @@ export function SiteHeader({
 }) {
   return (
     <header className="flex h-(--header-height) shrink-0 items-center border-b border-cyan-500/15 bg-background/70 backdrop-blur transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
-      <div className="flex w-full items-center gap-2 px-4 lg:px-6">
+      <div className="flex w-full items-center gap-2 px-4 lg:px-6 lg:pr-20">
         <SidebarTrigger className="-ml-1" />
         <div className="hidden items-center gap-2 text-sm text-muted-foreground md:flex">
           <span>Workspace</span>
