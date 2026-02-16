@@ -2,7 +2,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { ActivityFeed } from "@/components/recent-activity/activity-feed"
 import { recentActivityItems } from "@/components/recent-activity/data"
-import { RoomsGrid, type Room } from "@/components/rooms/rooms-grid"
+import { RoomsGrid } from "@/components/rooms/rooms-grid"
 import { SiteHeader } from "@/components/site-header"
 import {
   SidebarInset,
@@ -13,36 +13,6 @@ const metrics = [
   { label: "FOCUSED TIME", value: "4.2", suffix: "hours" },
   { label: "TEAM VELOCITY", value: "92%", suffix: "up this week" },
   { label: "ACTIVE COLLABORATORS", value: "14", suffix: "online" },
-]
-
-const rooms: Room[] = [
-  {
-    id: "room-react-wizards",
-    name: "React Wizards",
-    description: "Frontend architecture and component optimization.",
-    mode: "CAFE MODE",
-    membersCount: 6,
-    membersMax: 12,
-    icon: "code",
-  },
-  {
-    id: "room-saas-builders",
-    name: "SaaS Builders",
-    description: "Collaborating on the next generation of SaaS tools.",
-    mode: "BUILD SPRINT",
-    membersCount: 2,
-    membersMax: 8,
-    icon: "rocket",
-  },
-  {
-    id: "room-rust-study-group",
-    name: "Rust Study Group",
-    description: "Learning memory safety and performance together.",
-    mode: "SESSION ACTIVE",
-    membersCount: 3,
-    membersMax: 5,
-    icon: "cpu",
-  },
 ]
 
 export default function Page() {
@@ -88,7 +58,7 @@ export default function Page() {
               ))}
             </div>
 
-            <RoomsGrid initialRooms={rooms} />
+            <RoomsGrid />
 
             <div className="mt-10">
               <div className="mb-3 flex items-center justify-between">

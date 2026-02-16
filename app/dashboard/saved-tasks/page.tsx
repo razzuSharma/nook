@@ -1,5 +1,4 @@
 import { AppSidebar } from "@/components/app-sidebar"
-import { initialSavedTasks } from "@/components/saved-tasks/mock-tasks"
 import { TaskBoard } from "@/components/saved-tasks/task-board"
 import { SiteHeader } from "@/components/site-header"
 import {
@@ -31,7 +30,7 @@ export default function SavedTasksPage() {
                 board.
               </p>
             </div>
-            <TaskBoard initialTasks={initialSavedTasks} />
+            <TaskBoard />
           </div>
         </div>
       </SidebarInset>
