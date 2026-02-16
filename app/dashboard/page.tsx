@@ -2,13 +2,12 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { ActivityFeed } from "@/components/recent-activity/activity-feed"
 import { recentActivityItems } from "@/components/recent-activity/data"
+import { RoomsGrid, type Room } from "@/components/rooms/rooms-grid"
 import { SiteHeader } from "@/components/site-header"
-import { Badge } from "@/components/ui/badge"
 import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/ui/sidebar"
-import { Rocket, Code2, Cpu, Plus } from "lucide-react"
 
 const metrics = [
   { label: "FOCUSED TIME", value: "4.2", suffix: "hours" },
@@ -16,27 +15,33 @@ const metrics = [
   { label: "ACTIVE COLLABORATORS", value: "14", suffix: "online" },
 ]
 
-const rooms = [
+const rooms: Room[] = [
   {
+    id: "room-react-wizards",
     name: "React Wizards",
     description: "Frontend architecture and component optimization.",
     mode: "CAFE MODE",
-    members: "6/12 Members",
-    icon: Code2,
+    membersCount: 6,
+    membersMax: 12,
+    icon: "code",
   },
   {
+    id: "room-saas-builders",
     name: "SaaS Builders",
     description: "Collaborating on the next generation of SaaS tools.",
     mode: "BUILD SPRINT",
-    members: "2/8 Members",
-    icon: Rocket,
+    membersCount: 2,
+    membersMax: 8,
+    icon: "rocket",
   },
   {
+    id: "room-rust-study-group",
     name: "Rust Study Group",
     description: "Learning memory safety and performance together.",
     mode: "SESSION ACTIVE",
-    members: "3/5 Members",
-    icon: Cpu,
+    membersCount: 3,
+    membersMax: 5,
+    icon: "cpu",
   },
 ]
 
@@ -83,67 +88,7 @@ export default function Page() {
               ))}
             </div>
 
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-2xl font-semibold">Your Rooms</h2>
-              <a
-                href="#"
-                className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300 dark:hover:text-cyan-200"
-              >
-                View All
-              </a>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              {rooms.map((room) => (
-                <article
-                  key={room.name}
-                  className="rounded-2xl border border-cyan-500/20 bg-slate-50/40 p-5 shadow-sm backdrop-blur dark:bg-slate-900/40"
-                >
-                  <div className="mb-5 flex items-start justify-between">
-                    <div className="rounded-lg bg-cyan-500/15 p-2 text-cyan-800 dark:text-cyan-300">
-                      <room.icon className="size-5" />
-                    </div>
-                    <Badge className="bg-cyan-500/20 text-cyan-800 dark:text-cyan-300">
-                      {room.mode}
-                    </Badge>
-                  </div>
-                  <h3 className="text-xl font-semibold">{room.name}</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">{room.description}</p>
-                  <div className="mt-6 flex items-center justify-between">
-                    <div className="flex items-center -space-x-2">
-                      <div className="flex size-7 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-200/80 text-xs font-medium text-cyan-900">
-                        AR
-                      </div>
-                      <div className="flex size-7 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-100 text-xs font-medium text-cyan-900">
-                        DP
-                      </div>
-                      <div className="flex size-7 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-50 text-xs font-medium text-cyan-900">
-                        +2
-                      </div>
-                    </div>
-                    <span className="text-sm text-muted-foreground">{room.members}</span>
-                  </div>
-                </article>
-              ))}
-
-              <button
-                type="button"
-                className="group rounded-2xl border border-dashed border-cyan-500/35 bg-cyan-500/5 p-5 text-left transition-colors hover:bg-cyan-500/10"
-              >
-                <div className="mb-5 flex items-start justify-between">
-                  <div className="rounded-full border border-cyan-500/30 p-2 text-cyan-700 dark:text-cyan-300">
-                    <Plus className="size-5" />
-                  </div>
-                  <Badge className="bg-cyan-500/15 text-cyan-800 dark:text-cyan-300">
-                    START NEW
-                  </Badge>
-                </div>
-                <h3 className="text-xl font-semibold">Create a new room</h3>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Start a focused collaboration session.
-                </p>
-              </button>
-            </div>
+            <RoomsGrid initialRooms={rooms} />
 
             <div className="mt-10">
               <div className="mb-3 flex items-center justify-between">

@@ -1,3 +1,5 @@
+"use client"
+
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -27,6 +29,9 @@ export function SiteHeader({
           <Button
             size="sm"
             className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+            onClick={() => {
+              window.dispatchEvent(new Event("nook:create-room"))
+            }}
           >
             <Plus />
             {actionLabel}
