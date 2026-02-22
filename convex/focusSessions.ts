@@ -2,16 +2,6 @@ import { mutation, query } from "./_generated/server"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { v } from "convex/values"
 
-const defaultSessions = [
-  {
-    sessionId: "session-seed-1",
-    intention: "Ship Convex rooms migration",
-    reflection: "Connected dashboard rooms and sidebar to Convex successfully.",
-    durationMinutes: 42,
-    completedAt: "2026-02-16T10:30:00.000Z",
-  },
-]
-
 function toHex(bytes: Uint8Array) {
   return Array.from(bytes)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -48,6 +38,8 @@ async function requireUserId(
   return user._id
 }
 
+const LEGACY_SEEDED_SESSION_ID = "session-seed-1"
+
 export const list = query({
   args: {
     sessionToken: v.string(),
@@ -69,24 +61,23 @@ export const ensureDefaults = mutation({
     sessionToken: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUserId(ctx, args.sessionToken)
-    const existing = await ctx.db
-      .query("focusSessions")
-      .withIndex("by_user_createdAt", (indexQuery) =>
-        indexQuery.eq("userId", userId)
-      )
-      .first()
-    if (existing) {
-      return
+    await requireUserId(ctx, args.sessionToken)
+  },
+})
+
+export const cleanupSeeded = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("focusSessions").collect()
+
+    let deletedSessions = 0
+    for (const session of sessions) {
+      if (session.sessionId !== LEGACY_SEEDED_SESSION_ID) continue
+      await ctx.db.delete(session._id)
+      deletedSessions += 1
     }
 
-    for (const session of defaultSessions) {
-      await ctx.db.insert("focusSessions", {
-        ...session,
-        userId,
-        createdAt: Date.now(),
-      })
-    }
+    return { deletedSessions }
   },
 })
 

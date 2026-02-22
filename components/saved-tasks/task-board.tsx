@@ -239,7 +239,6 @@ export function TaskBoard() {
         }
       >
     | undefined
-  const ensureDefaults = useMutation(tasksApi.ensureDefaults)
   const syncTasks = useMutation(tasksApi.sync)
   const serverTasks = React.useMemo(() => {
     if (!tasksFromDb) return []
@@ -312,11 +311,6 @@ export function TaskBoard() {
     }
     return null
   }, [editingTaskId, board])
-
-  React.useEffect(() => {
-    if (!sessionToken) return
-    void ensureDefaults({ sessionToken })
-  }, [ensureDefaults, sessionToken])
 
   React.useEffect(() => {
     if (!tasksFromDb) return

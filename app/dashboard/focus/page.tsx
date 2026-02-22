@@ -113,7 +113,6 @@ export default function FocusPage() {
         }
       >
     | undefined
-  const ensureDefaults = useMutation(focusSessionsApi.ensureDefaults)
   const createSession = useMutation(focusSessionsApi.create)
   const startRoomFocus = useMutation(roomFocusApi.start)
   const markRoomFocusDone = useMutation(roomFocusApi.markDone)
@@ -175,11 +174,6 @@ export default function FocusPage() {
       dailyEntries,
     }
   }, [sessionHistory])
-
-  React.useEffect(() => {
-    if (!sessionToken) return
-    void ensureDefaults({ sessionToken })
-  }, [ensureDefaults, sessionToken])
 
   React.useEffect(() => {
     if (!intentionParam || intention.trim().length > 0) return

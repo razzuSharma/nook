@@ -13,7 +13,6 @@ import {
   Timer,
   Users,
 } from "lucide-react"
-import { defaultRooms } from "@/components/rooms/types"
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
@@ -115,14 +114,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     roomsApi.pinnedRoomIdsByUser,
     userId ? { userId } : "skip"
   ) as Id<"rooms">[] | undefined
-  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
   const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
   const leaveRoomInDb = useMutation(roomsApi.leaveRoom)
   const roomNames = React.useMemo(() => {
-    if (!roomDocs || roomDocs.length === 0) {
-      return defaultRooms.map((room) => room.name)
-    }
-    return roomDocs.map((room) => room.name)
+    return (roomDocs ?? []).map((room) => room.name)
   }, [roomDocs])
   const pinnedRooms = React.useMemo(
     () =>
@@ -131,10 +126,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       ),
     [pinnedRoomIdsQuery, roomDocs]
   )
-
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
 
   const [joinCandidate, setJoinCandidate] = React.useState<{
     id: Id<"rooms">
