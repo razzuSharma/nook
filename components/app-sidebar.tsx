@@ -41,6 +41,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar"
 
 const data = {
@@ -98,6 +99,7 @@ type RoomListItem = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const { state } = useSidebar()
   const router = useRouter()
   const pathname = usePathname()
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
@@ -193,15 +195,40 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              className="data-[slot=sidebar-menu-button]:!p-2"
+              size="lg"
+              className="data-[slot=sidebar-menu-button]:!pt-0.5 group-data-[collapsible=icon]:!size-8 group-data-[collapsible=icon]:!p-0 hover:bg-transparent! active:bg-transparent! data-[active=true]:bg-transparent!"
             >
-              <a href="#">
-                <div className="flex size-6 items-center justify-center rounded-md bg-nook-accent/20 text-nook-accent">
-                  <Command className="size-4" />
+              <a href="#" className="flex items-center justify-start w-full">
+
+                <div className="relative flex h-full w-full items-center">
+                  {/* Collapsed Icon Version */}
+                  <img
+                    src="/nook-logo.png"
+                    alt="Nook logo"
+                    className="absolute inset-0 h-8 w-8 object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-100 opacity-0 dark:block hidden"
+                  />
+                  <img
+                    src="/nook-logo-light.png"
+                    alt="Nook logo"
+                    className="absolute inset-0 h-8 w-8 scale-[0.85] -translate-y-[2px] object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-100 opacity-0 dark:hidden block"
+                  />
+
+                  {/* Expanded Full Logo */}
+                  <img
+                    src="/nook.png"
+                    alt="Nook logo"
+                    className="h-10 w-auto object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-0 opacity-100 dark:block hidden"
+                  />
+                  <img
+                    src="/nook-light.png"
+                    alt="Nook logo"
+                    className="h-10 w-auto scale-[0.78] -translate-x-[12px] -translate-y-[3px] object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-0 opacity-100 dark:hidden block"
+                  />
                 </div>
-                <span className="text-base font-semibold">Nook</span>
+
               </a>
             </SidebarMenuButton>
+
           </SidebarMenuItem>
         </SidebarMenu>
         <SidebarInput
@@ -344,13 +371,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               ))}
               {!roomDocs?.length
                 ? roomNames.map((name) => (
-                    <SidebarMenuItem key={name}>
-                      <SidebarMenuButton>
-                        <Users />
-                        <span>{name}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))
+                  <SidebarMenuItem key={name}>
+                    <SidebarMenuButton>
+                      <Users />
+                      <span>{name}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))
                 : null}
             </SidebarMenu>
           </SidebarGroupContent>
