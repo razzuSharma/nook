@@ -60,6 +60,11 @@ type RoomTask = {
   status: TaskStatus
 }
 
+export type RoomTaskFocusTarget = {
+  id: string
+  title: string
+}
+
 type TaskBoardState = Record<TaskStatus, RoomTask[]>
 
 const boardColumns: Array<{
@@ -118,9 +123,11 @@ function cardStatusClass(status: TaskStatus) {
 function TaskCard({
   task,
   onEdit,
+  onStartFocus,
 }: {
   task: RoomTask
   onEdit: (task: RoomTask) => void
+  onStartFocus?: (task: RoomTaskFocusTarget) => void
 }) {
   const {
     attributes,
@@ -150,6 +157,20 @@ function TaskCard({
           <h4 className="text-sm font-medium">{task.title}</h4>
         </div>
         <div className="flex items-center gap-2">
+          {onStartFocus ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[10px]"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onStartFocus({ id: task.id, title: task.title })
+              }}
+            >
+              Focus
+            </Button>
+          ) : null}
           <Badge className={cn("capitalize", priorityClass(task.priority))}>
             {task.priority}
           </Badge>
@@ -201,7 +222,13 @@ function ColumnDropZone({
   )
 }
 
-export function RoomTaskBoard({ roomId }: { roomId: Id<"rooms"> }) {
+export function RoomTaskBoard({
+  roomId,
+  onStartFocusTask,
+}: {
+  roomId: Id<"rooms">
+  onStartFocusTask?: (task: RoomTaskFocusTarget) => void
+}) {
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
     | Array<{
         taskId: string
@@ -510,7 +537,12 @@ export function RoomTaskBoard({ roomId }: { roomId: Id<"rooms"> }) {
                       </p>
                     ) : null}
                     {items.map((task) => (
-                      <TaskCard key={task.id} task={task} onEdit={openEdit} />
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        onEdit={openEdit}
+                        onStartFocus={onStartFocusTask}
+                      />
                     ))}
                   </div>
                 </SortableContext>

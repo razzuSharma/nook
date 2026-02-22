@@ -2,12 +2,23 @@ import { api } from "@/convex/_generated/api"
 import type { FunctionReference } from "convex/server"
 
 type TasksApiShape = {
-  list: FunctionReference<"query", "public", Record<string, never>, unknown>
-  ensureDefaults: FunctionReference<"mutation", "public", Record<string, never>, unknown>
+  list: FunctionReference<
+    "query",
+    "public",
+    { sessionToken: string },
+    unknown
+  >
+  ensureDefaults: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string },
+    unknown
+  >
   sync: FunctionReference<
     "mutation",
     "public",
     {
+      sessionToken: string
       tasks: Array<{
         taskId: string
         title: string

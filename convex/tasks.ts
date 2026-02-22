@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server"
+import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { v } from "convex/values"
 
 const defaultTasks = [
@@ -45,17 +46,65 @@ const defaultTasks = [
   },
 ]
 
+function toHex(bytes: Uint8Array) {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+async function sha256(value: string) {
+  const data = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest("SHA-256", data)
+  return toHex(new Uint8Array(digest))
+}
+
+async function requireUserId(
+  ctx: QueryCtx | MutationCtx,
+  sessionToken: string
+) {
+  const tokenHash = await sha256(sessionToken)
+  const session = await ctx.db
+    .query("authSessions")
+    .withIndex("by_tokenHash", (indexQuery) =>
+      indexQuery.eq("tokenHash", tokenHash)
+    )
+    .first()
+
+  if (!session || session.expiresAt <= Date.now()) {
+    throw new Error("Unauthorized.")
+  }
+
+  const user = await ctx.db.get(session.userId)
+  if (!user) {
+    throw new Error("Unauthorized.")
+  }
+
+  return user._id
+}
+
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("tasks").withIndex("by_order").collect()
+  args: {
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx, args.sessionToken)
+    return await ctx.db
+      .query("tasks")
+      .withIndex("by_user_order", (indexQuery) => indexQuery.eq("userId", userId))
+      .collect()
   },
 })
 
 export const ensureDefaults = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const existing = await ctx.db.query("tasks").first()
+  args: {
+    sessionToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx, args.sessionToken)
+    const existing = await ctx.db
+      .query("tasks")
+      .withIndex("by_user_order", (indexQuery) => indexQuery.eq("userId", userId))
+      .first()
     if (existing) {
       return
     }
@@ -64,6 +113,7 @@ export const ensureDefaults = mutation({
       const now = Date.now()
       await ctx.db.insert("tasks", {
         ...task,
+        userId,
         completedAt: task.status === "completed" ? task.completedAt ?? now : undefined,
         createdAt: now,
         updatedAt: now,
@@ -74,6 +124,7 @@ export const ensureDefaults = mutation({
 
 export const sync = mutation({
   args: {
+    sessionToken: v.string(),
     tasks: v.array(
       v.object({
         taskId: v.string(),
@@ -92,7 +143,11 @@ export const sync = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db.query("tasks").collect()
+    const userId = await requireUserId(ctx, args.sessionToken)
+    const existing = await ctx.db
+      .query("tasks")
+      .withIndex("by_user_order", (indexQuery) => indexQuery.eq("userId", userId))
+      .collect()
     const existingByTaskId = new Map(existing.map((task) => [task.taskId, task]))
     const incomingTaskIds = new Set(args.tasks.map((task) => task.taskId))
 
@@ -128,6 +183,7 @@ export const sync = mutation({
         })
       } else {
         await ctx.db.insert("tasks", {
+          userId,
           ...task,
           completedAt: task.status === "completed" ? now : undefined,
           createdAt: now,

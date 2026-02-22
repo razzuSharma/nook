@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
+import type * as email from "../email.js";
 import type * as focusSessions from "../focusSessions.js";
+import type * as roomFocus from "../roomFocus.js";
 import type * as roomTasks from "../roomTasks.js";
 import type * as rooms from "../rooms.js";
 import type * as tasks from "../tasks.js";
@@ -20,7 +23,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  email: typeof email;
   focusSessions: typeof focusSessions;
+  roomFocus: typeof roomFocus;
   roomTasks: typeof roomTasks;
   rooms: typeof rooms;
   tasks: typeof tasks;

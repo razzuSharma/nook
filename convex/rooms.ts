@@ -129,11 +129,13 @@ export const create = mutation({
     description: v.string(),
     mode: v.string(),
     membersMax: v.number(),
+    userId: v.string(),
   },
   handler: async (ctx, args) => {
     const safeMax = Math.min(Math.max(args.membersMax, 2), 30)
+    const now = Date.now()
 
-    return await ctx.db.insert("rooms", {
+    const roomId = await ctx.db.insert("rooms", {
       name: args.name.trim(),
       description: args.description.trim(),
       mode: args.mode.trim().toUpperCase(),
@@ -141,8 +143,18 @@ export const create = mutation({
       membersMax: safeMax,
       joinCode: generateJoinCode(),
       icon: "sparkles",
-      createdAt: Date.now(),
+      createdAt: now,
     })
+
+    await ctx.db.insert("roomMembers", {
+      roomId,
+      userId: args.userId,
+      role: "admin",
+      status: "active",
+      joinedAt: now,
+    })
+
+    return roomId
   },
 })
 

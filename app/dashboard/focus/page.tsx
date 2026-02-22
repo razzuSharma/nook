@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
+import { useSearchParams } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { SiteHeader } from "@/components/site-header"
@@ -9,6 +10,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
+import { roomFocusApi } from "@/lib/convex-room-focus-api"
+import { useAuth } from "@/components/providers/auth-provider"
+import type { Id } from "@/convex/_generated/dataModel"
 import {
   SidebarInset,
   SidebarProvider,
@@ -81,6 +85,12 @@ function readRuntime(): FocusRuntime | null {
 }
 
 export default function FocusPage() {
+  const searchParams = useSearchParams()
+  const { sessionToken } = useAuth()
+  const roomIdParam = searchParams.get("roomId")
+  const taskIdParam = searchParams.get("taskId")
+  const intentionParam = searchParams.get("intention")
+  const roomId = roomIdParam as Id<"rooms"> | null
   const [state, setState] = React.useState<SessionState>("START")
   const [intention, setIntention] = React.useState("")
   const [reflection, setReflection] = React.useState("")
@@ -92,7 +102,10 @@ export default function FocusPage() {
   const [ambientCopy, setAmbientCopy] = React.useState(AMBIENT_COPY[0])
   const [runtimeReady, setRuntimeReady] = React.useState(false)
 
-  const sessionDocs = useQuery(focusSessionsApi.list) as
+  const sessionDocs = useQuery(
+    focusSessionsApi.list,
+    sessionToken ? { sessionToken } : "skip"
+  ) as
     | Array<
         FocusSessionRecord & {
           _id: string
@@ -102,6 +115,9 @@ export default function FocusPage() {
     | undefined
   const ensureDefaults = useMutation(focusSessionsApi.ensureDefaults)
   const createSession = useMutation(focusSessionsApi.create)
+  const startRoomFocus = useMutation(roomFocusApi.start)
+  const markRoomFocusDone = useMutation(roomFocusApi.markDone)
+  const completeRoomFocus = useMutation(roomFocusApi.complete)
   const sessionHistory = React.useMemo(() => {
     if (!sessionDocs) return []
     return sessionDocs.map((session) => ({
@@ -161,8 +177,14 @@ export default function FocusPage() {
   }, [sessionHistory])
 
   React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
+    if (!sessionToken) return
+    void ensureDefaults({ sessionToken })
+  }, [ensureDefaults, sessionToken])
+
+  React.useEffect(() => {
+    if (!intentionParam || intention.trim().length > 0) return
+    setIntention(intentionParam)
+  }, [intentionParam, intention])
 
   React.useEffect(() => {
     const runtime = readRuntime()
@@ -278,13 +300,19 @@ export default function FocusPage() {
         if (remaining === 0) {
           setState("REFLECT")
           setSessionEndsAt(null)
+          if (sessionToken && roomId) {
+            void markRoomFocusDone({
+              sessionToken,
+              roomId,
+            })
+          }
         }
       }, 1000)
     }
     return () => {
       if (timer) clearInterval(timer)
     }
-  }, [state, sessionEndsAt])
+  }, [state, sessionEndsAt, sessionToken, roomId, markRoomFocusDone])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -306,11 +334,28 @@ export default function FocusPage() {
     setTimeLeft(totalSeconds)
     setReflection("")
     setAmbientCopy(AMBIENT_COPY[Math.floor(Math.random() * AMBIENT_COPY.length)])
+
+    if (sessionToken && roomId) {
+      void startRoomFocus({
+        sessionToken,
+        roomId,
+        intention: (intention || intentionParam || "").trim() || "Deep Work",
+        durationMinutes: safeMinutes,
+        taskId: taskIdParam ?? undefined,
+        visibility: "room",
+      })
+    }
   }
 
   const finishSession = () => {
     setState("REFLECT")
     setSessionEndsAt(null)
+    if (sessionToken && roomId) {
+      void markRoomFocusDone({
+        sessionToken,
+        roomId,
+      })
+    }
   }
 
   const resetSession = () => {
@@ -325,6 +370,10 @@ export default function FocusPage() {
   }
 
   const saveSessionAndReset = async (skipReflection: boolean) => {
+    if (!sessionToken) {
+      resetSession()
+      return
+    }
     if (sessionStartedAt) {
       const elapsedSeconds = Math.max(1, sessionDurationSeconds - timeLeft)
       const durationCompletedMinutes = Math.max(1, Math.round(elapsedSeconds / 60))
@@ -337,12 +386,21 @@ export default function FocusPage() {
       }
 
       await createSession({
+        sessionToken,
         sessionId: entry.id,
         intention: entry.intention,
         reflection: entry.reflection,
         durationMinutes: entry.durationMinutes,
         completedAt: entry.completedAt,
       })
+
+      if (roomId) {
+        await completeRoomFocus({
+          sessionToken,
+          roomId,
+          reflection: entry.reflection,
+        })
+      }
     }
 
     resetSession()
