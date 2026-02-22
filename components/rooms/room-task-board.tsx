@@ -27,9 +27,12 @@ import { Edit3, GripVertical, Plus, Trash2, UserRound } from "lucide-react"
 
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
+import { roomsApi } from "@/lib/convex-rooms-api"
+import { useAuth } from "@/components/providers/auth-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Drawer,
   DrawerContent,
@@ -46,16 +49,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { avatarSrcForKey } from "@/lib/avatar-options"
 import { cn } from "@/lib/utils"
 
 type TaskStatus = "todo" | "working" | "completed"
 type TaskPriority = "low" | "medium" | "high"
+
+type RoomMember = {
+  userId: string
+  name: string
+  email: string
+  role: "viewer" | "member" | "admin"
+  avatarKey: string
+}
 
 type RoomTask = {
   id: string
   title: string
   note: string
   assignee: string
+  assigneeUserId?: string
   priority: TaskPriority
   status: TaskStatus
 }
@@ -99,6 +112,7 @@ function tasksEqual(a: RoomTask[], b: RoomTask[]) {
       a[i].title !== b[i].title ||
       a[i].note !== b[i].note ||
       a[i].assignee !== b[i].assignee ||
+      a[i].assigneeUserId !== b[i].assigneeUserId ||
       a[i].priority !== b[i].priority ||
       a[i].status !== b[i].status
     ) {
@@ -129,13 +143,9 @@ function TaskCard({
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({ id: task.id })
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: task.id,
+  })
 
   return (
     <article
@@ -229,16 +239,29 @@ export function RoomTaskBoard({
   roomId: Id<"rooms">
   onStartFocusTask?: (task: RoomTaskFocusTarget) => void
 }) {
+  const { sessionToken } = useAuth()
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
     | Array<{
         taskId: string
         title: string
         note: string
         assignee: string
+        assigneeUserId?: string
         priority: TaskPriority
         status: TaskStatus
       }>
     | undefined
+  const membersQuery = useQuery(
+    roomsApi.listMembersByRoom,
+    sessionToken ? { sessionToken, roomId } : "skip"
+  ) as RoomMember[] | undefined
+  const members = React.useMemo(() => membersQuery ?? [], [membersQuery])
+
+  const memberNameById = React.useMemo(
+    () => new Map(members.map((member) => [member.userId, member.name])),
+    [members]
+  )
+
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
 
   const serverTasks = React.useMemo(() => {
@@ -248,6 +271,7 @@ export function RoomTaskBoard({
       title: task.title,
       note: task.note,
       assignee: task.assignee,
+      assigneeUserId: task.assigneeUserId,
       priority: task.priority,
       status: task.status,
     }))
@@ -256,13 +280,13 @@ export function RoomTaskBoard({
   const [board, setBoard] = React.useState<TaskBoardState>(() => toBoardState([]))
   const [draftTitle, setDraftTitle] = React.useState("")
   const [draftNote, setDraftNote] = React.useState("")
-  const [draftAssignee, setDraftAssignee] = React.useState("")
+  const [draftAssigneeUserId, setDraftAssigneeUserId] = React.useState("none")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null)
   const [editTitle, setEditTitle] = React.useState("")
   const [editNote, setEditNote] = React.useState("")
-  const [editAssignee, setEditAssignee] = React.useState("")
+  const [editAssigneeUserId, setEditAssigneeUserId] = React.useState("none")
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("medium")
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
 
@@ -284,6 +308,7 @@ export function RoomTaskBoard({
       title: task.title,
       note: task.note,
       assignee: task.assignee,
+      assigneeUserId: task.assigneeUserId as Id<"users"> | undefined,
       priority: task.priority,
       status: task.status,
       order: index,
@@ -329,11 +354,15 @@ export function RoomTaskBoard({
     const note = draftNote.trim()
     if (!title || !note) return
 
+    const assigneeUserId = draftAssigneeUserId === "none" ? undefined : draftAssigneeUserId
+    const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
+
     const task: RoomTask = {
       id: `rt-${Date.now()}`,
       title,
       note,
-      assignee: draftAssignee.trim(),
+      assignee,
+      assigneeUserId,
       priority: draftPriority,
       status: "todo",
     }
@@ -348,7 +377,7 @@ export function RoomTaskBoard({
     })
     setDraftTitle("")
     setDraftNote("")
-    setDraftAssignee("")
+    setDraftAssigneeUserId("none")
     setDraftPriority("medium")
   }
 
@@ -356,7 +385,7 @@ export function RoomTaskBoard({
     setEditingTaskId(task.id)
     setEditTitle(task.title)
     setEditNote(task.note)
-    setEditAssignee(task.assignee)
+    setEditAssigneeUserId(task.assigneeUserId ?? "none")
     setEditPriority(task.priority)
     setEditStatus(task.status)
   }
@@ -364,6 +393,8 @@ export function RoomTaskBoard({
   function saveTaskEdit() {
     if (!editingTaskId) return
     const nextStatus = editStatus
+    const assigneeUserId = editAssigneeUserId === "none" ? undefined : editAssigneeUserId
+    const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
 
     setBoard((prev) => {
       const next = { ...prev }
@@ -375,7 +406,8 @@ export function RoomTaskBoard({
             ...task,
             title: editTitle.trim() || task.title,
             note: editNote.trim() || task.note,
-            assignee: editAssignee.trim(),
+            assignee,
+            assigneeUserId,
             priority: editPriority,
             status: nextStatus,
           }
@@ -455,6 +487,31 @@ export function RoomTaskBoard({
   }
 
   const canAddTask = draftTitle.trim().length > 0 && draftNote.trim().length > 0
+  const boardTasks = React.useMemo(() => flattenBoard(board), [board])
+  const memberProgress = React.useMemo(() => {
+    return members
+      .map((member) => {
+        const assigned = boardTasks.filter((task) => task.assigneeUserId === member.userId)
+        const total = assigned.length
+        const completed = assigned.filter((task) => task.status === "completed").length
+        const working = assigned.filter((task) => task.status === "working").length
+        const todo = assigned.filter((task) => task.status === "todo").length
+        const progress = total > 0 ? Math.round((completed / total) * 100) : 0
+        return {
+          member,
+          total,
+          completed,
+          working,
+          todo,
+          progress,
+        }
+      })
+      .sort((left, right) => {
+        if (right.total !== left.total) return right.total - left.total
+        if (right.working !== left.working) return right.working - left.working
+        return left.member.name.localeCompare(right.member.name)
+      })
+  }, [boardTasks, members])
 
   return (
     <div className="space-y-5">
@@ -476,12 +533,19 @@ export function RoomTaskBoard({
             className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
           />
           <div className="grid gap-3 md:grid-cols-3">
-            <Input
-              value={draftAssignee}
-              onChange={(event) => setDraftAssignee(event.target.value)}
-              placeholder="Assign to (name)"
-              className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-            />
+            <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
+              <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                <SelectValue placeholder="Assign to" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Unassigned</SelectItem>
+                {members.map((member) => (
+                  <SelectItem key={member.userId} value={member.userId}>
+                    {member.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select
               value={draftPriority}
               onValueChange={(value) => setDraftPriority(value as TaskPriority)}
@@ -505,6 +569,69 @@ export function RoomTaskBoard({
               Add Task
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Member Progress</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {memberProgress.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No room members found.</p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {memberProgress.map((item) => {
+                const initials = item.member.name
+                  .split(" ")
+                  .map((part) => part[0] ?? "")
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()
+
+                return (
+                  <article
+                    key={item.member.userId}
+                    className="rounded-xl border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Avatar className="size-9 border border-cyan-500/30">
+                          <AvatarImage
+                            src={avatarSrcForKey(item.member.avatarKey)}
+                            alt={item.member.name}
+                          />
+                          <AvatarFallback>{initials}</AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="text-sm font-medium leading-tight">{item.member.name}</p>
+                          <p className="text-xs text-muted-foreground">{item.member.role}</p>
+                        </div>
+                      </div>
+                      <Badge variant="secondary">{item.total} tasks</Badge>
+                    </div>
+
+                    <div className="mb-2 h-2 overflow-hidden rounded-full bg-slate-300/40 dark:bg-slate-700/60">
+                      <div
+                        className={cn(
+                          "h-full rounded-full bg-cyan-500 transition-all",
+                          item.progress === 100 && "bg-emerald-500"
+                        )}
+                        style={{ width: `${item.progress}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-2 text-xs">
+                      <span className="text-muted-foreground">Done: {item.completed}</span>
+                      <span className="text-muted-foreground">Doing: {item.working}</span>
+                      <span className="text-muted-foreground">Todo: {item.todo}</span>
+                      <span className="text-right font-medium">{item.progress}%</span>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -586,11 +713,19 @@ export function RoomTaskBoard({
               onChange={(event) => setEditNote(event.target.value)}
               className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <Input
-              value={editAssignee}
-              onChange={(event) => setEditAssignee(event.target.value)}
-              placeholder="Assign to (name)"
-            />
+            <Select value={editAssigneeUserId} onValueChange={setEditAssigneeUserId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Assign to" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Unassigned</SelectItem>
+                {members.map((member) => (
+                  <SelectItem key={member.userId} value={member.userId}>
+                    {member.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="grid gap-4 sm:grid-cols-2">
               <Select
                 value={editPriority}

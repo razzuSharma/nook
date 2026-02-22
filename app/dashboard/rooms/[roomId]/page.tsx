@@ -13,9 +13,18 @@ import { RoomTaskBoard } from "@/components/rooms/room-task-board"
 import type { RoomTaskFocusTarget } from "@/components/rooms/room-task-board"
 import { RoomFocusPanel } from "@/components/rooms/room-focus-panel"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { roomInvitesApi } from "@/lib/convex-room-invites-api"
 import { useAuth } from "@/components/providers/auth-provider"
 import {
   SidebarInset,
@@ -27,14 +36,23 @@ type RoomDoc = {
   name: string
   description: string
   mode: string
+  access?: "public" | "private" | "invite_only"
   membersCount: number
   membersMax: number
   joinCode?: string
 }
 
+type RoomInvite = {
+  _id: Id<"roomInvites">
+  email: string
+  role: "viewer" | "member" | "admin"
+  status: "pending" | "accepted" | "revoked" | "expired"
+  expiresAt: number
+}
+
 export default function RoomPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, sessionToken } = useAuth()
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
 
@@ -44,16 +62,44 @@ export default function RoomPage() {
     user ? { userId: user.id } : "skip"
   ) ?? []) as Id<"rooms">[]
   const ensureDefaults = useMutation(roomsApi.ensureDefaults)
-
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
+  const createInvite = useMutation(roomInvitesApi.create)
+  const revokeInvite = useMutation(roomInvitesApi.revoke)
+  const [inviteEmail, setInviteEmail] = React.useState("")
+  const [inviteRole, setInviteRole] = React.useState<"viewer" | "member" | "admin">(
+    "member"
+  )
+  const [inviteLink, setInviteLink] = React.useState<string | null>(null)
+  const [inviteError, setInviteError] = React.useState<string | null>(null)
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
     [roomId, rooms]
   )
   const isJoined = room ? joinedRoomIds.includes(room._id) : false
+
+  const roomInvites = (useQuery(
+    roomInvitesApi.listByRoom,
+    sessionToken && room && isJoined
+      ? { sessionToken, roomId: room._id }
+      : "skip"
+  ) ?? []) as RoomInvite[]
+  const roomMembers = (useQuery(
+    roomsApi.listMembersByRoom,
+    sessionToken && room && isJoined
+      ? { sessionToken, roomId: room._id }
+      : "skip"
+  ) ?? []) as Array<{
+    userId: string
+    name: string
+    role: "viewer" | "member" | "admin"
+    email: string
+    avatarKey: string
+  }>
+
+  React.useEffect(() => {
+    void ensureDefaults({})
+  }, [ensureDefaults])
+
 
   const startFocusFromTask = React.useCallback(
     (task: RoomTaskFocusTarget) => {
@@ -67,6 +113,25 @@ export default function RoomPage() {
     },
     [room, router]
   )
+
+  const sendInvite = React.useCallback(async () => {
+    if (!room || !sessionToken) return
+    setInviteError(null)
+    setInviteLink(null)
+    try {
+      const result = await createInvite({
+        sessionToken,
+        roomId: room._id,
+        email: inviteEmail,
+        role: inviteRole,
+        siteUrl: window.location.origin,
+      })
+      setInviteLink(result.inviteLink)
+      setInviteEmail("")
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "Unable to send invite.")
+    }
+  }, [room, sessionToken, createInvite, inviteEmail, inviteRole])
 
   return (
     <SidebarProvider
@@ -125,7 +190,7 @@ export default function RoomPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                   <Card className="border-cyan-500/20 bg-cyan-500/5">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-medium">Mode</CardTitle>
@@ -151,10 +216,119 @@ export default function RoomPage() {
                       <CardTitle className="text-sm font-medium">Join Code</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-lg font-semibold">{room.joinCode ?? "N/A"}</p>
+                      <p className="text-lg font-semibold">
+                        {(room.access ?? "public") === "public" ? (room.joinCode ?? "N/A") : "N/A"}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-cyan-500/20 bg-cyan-500/5">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">Access</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-lg font-semibold">
+                        {(room.access ?? "public") === "invite_only"
+                          ? "Invite Only"
+                          : (room.access ?? "public") === "private"
+                            ? "Private"
+                            : "Public"}
+                      </p>
                     </CardContent>
                   </Card>
                 </div>
+
+                {isJoined ? (
+                  <Card className="border-cyan-500/20 bg-background/70">
+                    <CardHeader>
+                      <CardTitle>Invite Members</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <Input
+                          value={inviteEmail}
+                          onChange={(event) => setInviteEmail(event.target.value)}
+                          placeholder="teammate@example.com"
+                          type="email"
+                        />
+                        <Select
+                          value={inviteRole}
+                          onValueChange={(value) =>
+                            setInviteRole(value as "viewer" | "member" | "admin")
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Role" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer</SelectItem>
+                            <SelectItem value="member">Member</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                          onClick={() => {
+                            void sendInvite()
+                          }}
+                        >
+                          Send Invite
+                        </Button>
+                      </div>
+                      {inviteError ? (
+                        <p className="text-sm text-red-600">{inviteError}</p>
+                      ) : null}
+                      {inviteLink ? (
+                        <div className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs">
+                          <p className="font-medium">Invite link (dev fallback)</p>
+                          <a
+                            href={inviteLink}
+                            className="mt-1 block break-all text-cyan-700 underline dark:text-cyan-300"
+                          >
+                            {inviteLink}
+                          </a>
+                        </div>
+                      ) : null}
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Pending invites</p>
+                        {roomInvites.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No pending invites.</p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {roomInvites.map((invite) => (
+                              <li
+                                key={invite._id}
+                                className="flex items-center justify-between rounded-md border border-cyan-500/15 px-3 py-2 text-sm"
+                              >
+                                <div>
+                                  <p className="font-medium">{invite.email}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {invite.role} • expires{" "}
+                                    {new Date(invite.expiresAt).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (!sessionToken) return
+                                    void revokeInvite({
+                                      sessionToken,
+                                      inviteId: invite._id,
+                                    })
+                                  }}
+                                >
+                                  Revoke
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
                 {!isJoined ? (
                   <Card className="border-amber-500/20 bg-background/70">
@@ -184,6 +358,26 @@ export default function RoomPage() {
                 </Card>
                 {isJoined ? (
                   <>
+                    <Card className="border-cyan-500/20 bg-background/70">
+                      <CardHeader>
+                        <CardTitle>Room Members</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="grid gap-2 md:grid-cols-2">
+                          {roomMembers.map((member) => (
+                            <li
+                              key={member.userId}
+                              className="rounded-md border border-cyan-500/15 px-3 py-2"
+                            >
+                              <p className="text-sm font-medium">{member.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {member.email} • {member.role}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
                     <RoomFocusPanel roomId={room._id} />
                     <RoomTaskBoard
                       roomId={room._id}

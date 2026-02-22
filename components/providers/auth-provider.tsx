@@ -8,6 +8,7 @@ type AuthUser = {
   id: string
   name: string
   email: string
+  avatarKey: string
   emailVerified: boolean
 }
 
@@ -20,6 +21,7 @@ type SignUpInput = {
   name: string
   email: string
   password: string
+  avatarKey: string
 }
 
 type AuthContextValue = {
@@ -30,6 +32,7 @@ type AuthContextValue = {
   signUp: (input: SignUpInput) => Promise<{ verificationLink: string }>
   resendVerificationEmail: (email: string) => Promise<{ verificationLink: string }>
   verifyEmail: (token: string) => Promise<void>
+  updateProfile: (input: { name: string; avatarKey: string }) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -64,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUpMutation = useMutation(authApi.signUp)
   const verifyEmailMutation = useMutation(authApi.verifyEmail)
   const resendVerificationMutation = useMutation(authApi.resendVerificationEmail)
+  const updateProfileMutation = useMutation(authApi.updateProfile)
   const signOutMutation = useMutation(authApi.signOut)
 
   React.useEffect(() => {
@@ -89,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       id: viewer.id,
       name: viewer.name,
       email: viewer.email,
+      avatarKey: viewer.avatarKey,
       emailVerified: viewer.emailVerified,
     }
   }, [viewer])
@@ -111,11 +116,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   )
 
   const signUp = React.useCallback(
-    async ({ name, email, password }: SignUpInput) => {
+    async ({ name, email, password, avatarKey }: SignUpInput) => {
       const result = await signUpMutation({
         name,
         email,
         password,
+        avatarKey,
         siteUrl: getSiteUrl(),
       })
       return { verificationLink: result.verificationLink }
@@ -152,6 +158,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSessionToken(null)
   }, [signOutMutation])
 
+  const updateProfile = React.useCallback(
+    async ({ name, avatarKey }: { name: string; avatarKey: string }) => {
+      if (!sessionToken) {
+        throw new Error("Not signed in.")
+      }
+      await updateProfileMutation({
+        sessionToken,
+        name,
+        avatarKey,
+      })
+    },
+    [sessionToken, updateProfileMutation]
+  )
+
   return (
     <AuthContext.Provider
       value={{
@@ -162,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         resendVerificationEmail,
         verifyEmail,
+        updateProfile,
         signOut,
       }}
     >

@@ -19,6 +19,7 @@ type RoomTasksApiShape = {
         title: string
         note: string
         assignee: string
+        assigneeUserId?: Id<"users">
         priority: "low" | "medium" | "high"
         status: "todo" | "working" | "completed"
         order: number

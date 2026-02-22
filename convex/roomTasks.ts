@@ -22,6 +22,7 @@ export const syncByRoom = mutation({
         title: v.string(),
         note: v.string(),
         assignee: v.string(),
+        assigneeUserId: v.optional(v.id("users")),
         priority: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
         status: v.union(
           v.literal("todo"),
@@ -60,6 +61,7 @@ export const syncByRoom = mutation({
           title: task.title,
           note: task.note,
           assignee: task.assignee,
+          assigneeUserId: task.assigneeUserId,
           priority: task.priority,
           status: task.status,
           order: task.order,
@@ -77,6 +79,7 @@ export const syncByRoom = mutation({
           title: task.title,
           note: task.note,
           assignee: task.assignee,
+          assigneeUserId: task.assigneeUserId,
           priority: task.priority,
           status: task.status,
           order: task.order,
