@@ -27,6 +27,9 @@ Nook helps individuals and teams stay in flow by giving them a single place to:
 ## **Core Screens**
 
 - `/` - Welcome / entry screen
+- `/sign-in` - Email/password sign-in
+- `/sign-up` - Email/password sign-up
+- `/verify-email` - Email verification callback
 - `/dashboard` - Main collaboration dashboard (rooms + metrics + activity)
 - `/dashboard/recent-activity` - Team activity timeline
 - `/dashboard/saved-tasks` - Saved tasks board
@@ -60,6 +63,17 @@ npm run dev
 ```
 
 Open: `http://localhost:3000`
+
+### **Auth + Email verification env (optional email sending)**
+
+Add these for real email delivery via Resend:
+
+```bash
+RESEND_API_KEY=...
+RESEND_FROM_EMAIL=Nook <no-reply@yourdomain.com>
+```
+
+Without these vars, verification links are still generated and shown in UI/dev logs.
 
 ### **3. Production build**
 
@@ -96,4 +110,4 @@ public/
 
 ## **Notes**
 
-This project currently uses demo/mock content for rooms, activity, and tasks to showcase UX and flow.
+Auth now persists users/sessions in Convex. Some activity and analytics views still use demo/mock content.

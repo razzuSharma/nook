@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
+import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 
 export function WelcomeScreen() {
+  const { user } = useAuth()
+
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_20%_0%,color-mix(in_oklch,var(--nook-accent)_32%,transparent),transparent_38%),radial-gradient(circle_at_90%_10%,color-mix(in_oklch,var(--nook-accent-strong)_26%,transparent),transparent_36%),linear-gradient(180deg,var(--nook-surface)_0%,var(--background)_100%)] px-4 py-10">
       <div className="pointer-events-none absolute inset-0">
@@ -35,11 +38,16 @@ export function WelcomeScreen() {
             size="lg"
             className="group bg-nook-accent text-slate-950 hover:bg-nook-accent-strong"
           >
-            <Link href="/dashboard">
-              Enter the new world of cafe and code.
+            <Link href={user ? "/dashboard" : "/sign-in"}>
+              {user ? "Enter the new world of cafe and code." : "Sign in to enter Nook."}
               <ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" />
             </Link>
           </Button>
+          {!user ? (
+            <Button asChild size="lg" variant="outline">
+              <Link href="/sign-up">Create account</Link>
+            </Button>
+          ) : null}
         </div>
       </section>
 

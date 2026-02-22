@@ -2,6 +2,33 @@ import { defineSchema, defineTable } from "convex/server"
 import { v } from "convex/values"
 
 export default defineSchema({
+  users: defineTable({
+    email: v.string(),
+    name: v.string(),
+    passwordHash: v.string(),
+    passwordSalt: v.string(),
+    emailVerifiedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_email", ["email"]),
+  authSessions: defineTable({
+    userId: v.id("users"),
+    tokenHash: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_user", ["userId"]),
+  emailVerificationTokens: defineTable({
+    userId: v.id("users"),
+    tokenHash: v.string(),
+    email: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_user", ["userId"]),
   rooms: defineTable({
     name: v.string(),
     description: v.string(),
@@ -55,7 +82,48 @@ export default defineSchema({
   })
     .index("by_room_order", ["roomId", "order"])
     .index("by_room_taskId", ["roomId", "taskId"]),
+  roomFocusPresence: defineTable({
+    roomId: v.id("rooms"),
+    userId: v.id("users"),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("focusing"),
+      v.literal("break"),
+      v.literal("done")
+    ),
+    intention: v.string(),
+    taskId: v.optional(v.string()),
+    visibility: v.union(
+      v.literal("private"),
+      v.literal("room"),
+      v.literal("room_with_reflection")
+    ),
+    startedAt: v.optional(v.number()),
+    endsAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_room_updatedAt", ["roomId", "updatedAt"])
+    .index("by_room_user", ["roomId", "userId"])
+    .index("by_user", ["userId"]),
+  roomFocusSessions: defineTable({
+    roomId: v.id("rooms"),
+    userId: v.id("users"),
+    intention: v.string(),
+    taskId: v.optional(v.string()),
+    durationMinutes: v.number(),
+    reflection: v.string(),
+    visibility: v.union(
+      v.literal("private"),
+      v.literal("room"),
+      v.literal("room_with_reflection")
+    ),
+    completedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_room_completedAt", ["roomId", "completedAt"])
+    .index("by_user_completedAt", ["userId", "completedAt"]),
   tasks: defineTable({
+    userId: v.optional(v.id("users")),
     taskId: v.string(),
     title: v.string(),
     note: v.string(),
@@ -73,8 +141,11 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_order", ["order"])
-    .index("by_taskId", ["taskId"]),
+    .index("by_taskId", ["taskId"])
+    .index("by_user_order", ["userId", "order"])
+    .index("by_user_taskId", ["userId", "taskId"]),
   focusSessions: defineTable({
+    userId: v.optional(v.id("users")),
     sessionId: v.string(),
     intention: v.string(),
     reflection: v.string(),
@@ -83,5 +154,6 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_createdAt", ["createdAt"])
-    .index("by_sessionId", ["sessionId"]),
+    .index("by_sessionId", ["sessionId"])
+    .index("by_user_createdAt", ["userId", "createdAt"]),
 })

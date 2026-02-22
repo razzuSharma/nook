@@ -49,6 +49,7 @@ type RoomsApiShape = {
       description: string
       mode: string
       membersMax: number
+      userId: string
     },
     unknown
   >

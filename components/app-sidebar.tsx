@@ -15,9 +15,9 @@ import {
 } from "lucide-react"
 import { defaultRooms } from "@/components/rooms/types"
 import type { Id } from "@/convex/_generated/dataModel"
-import { DEMO_USER_ID } from "@/lib/demo-user"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { Button } from "@/components/ui/button"
+import { useAuth } from "@/components/providers/auth-provider"
 import {
   Drawer,
   DrawerContent,
@@ -45,11 +45,6 @@ import {
 } from "@/components/ui/sidebar"
 
 const data = {
-  user: {
-    name: "Alex Rivers",
-    email: "Pro Plan",
-    avatar: "",
-  },
   primaryNav: [
     {
       title: "My Rooms",
@@ -99,16 +94,20 @@ type RoomListItem = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { state } = useSidebar()
+  useSidebar()
   const router = useRouter()
+  const { user, signOut } = useAuth()
   const pathname = usePathname()
+  const userId = user?.id
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const joinedRoomIds = (useQuery(roomsApi.joinedRoomIdsByUser, {
-    userId: DEMO_USER_ID,
-  }) ?? []) as Id<"rooms">[]
-  const pinnedRoomIdsQuery = useQuery(roomsApi.pinnedRoomIdsByUser, {
-    userId: DEMO_USER_ID,
-  }) as Id<"rooms">[] | undefined
+  const joinedRoomIds = (useQuery(
+    roomsApi.joinedRoomIdsByUser,
+    userId ? { userId } : "skip"
+  ) ?? []) as Id<"rooms">[]
+  const pinnedRoomIdsQuery = useQuery(
+    roomsApi.pinnedRoomIdsByUser,
+    userId ? { userId } : "skip"
+  ) as Id<"rooms">[] | undefined
   const ensureDefaults = useMutation(roomsApi.ensureDefaults)
   const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
   const leaveRoomInDb = useMutation(roomsApi.leaveRoom)
@@ -140,18 +139,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }
 
   async function joinRoom(roomId: Id<"rooms">) {
+    if (!userId) return
     await joinRoomInDb({
       roomId,
-      userId: DEMO_USER_ID,
+      userId,
     })
     router.push(`/dashboard/rooms/${roomId}`)
   }
 
   async function leaveRoom(roomId: Id<"rooms">) {
+    if (!userId) return
     await leaveRoomInDb({
       roomId,
-      userId: DEMO_USER_ID,
+      userId,
     })
+  }
+
+  const navUser = {
+    name: user?.name ?? "Nook User",
+    email: user?.email ?? "Signed out",
+    avatar: "",
   }
 
   const isNavItemActive = (title: string, url: string) => {
@@ -405,7 +412,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
       <SidebarSeparator />
       <SidebarFooter>
-        <NavUser user={data.user} />
+        <NavUser
+          user={navUser}
+          onLogout={() => {
+            void signOut()
+            router.push("/sign-in")
+          }}
+        />
       </SidebarFooter>
 
       <Drawer

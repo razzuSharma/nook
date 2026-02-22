@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { tasksApi } from "@/lib/convex-tasks-api"
+import { useAuth } from "@/components/providers/auth-provider"
 import { cn } from "@/lib/utils"
 import type {
   SavedTask,
@@ -225,7 +226,11 @@ function ColumnDropZone({
 }
 
 export function TaskBoard() {
-  const tasksFromDb = useQuery(tasksApi.list) as
+  const { sessionToken } = useAuth()
+  const tasksFromDb = useQuery(
+    tasksApi.list,
+    sessionToken ? { sessionToken } : "skip"
+  ) as
     | Array<
         SavedTask & {
           _id: string
@@ -309,8 +314,9 @@ export function TaskBoard() {
   }, [editingTaskId, board])
 
   React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
+    if (!sessionToken) return
+    void ensureDefaults({ sessionToken })
+  }, [ensureDefaults, sessionToken])
 
   React.useEffect(() => {
     if (!tasksFromDb) return
@@ -321,6 +327,7 @@ export function TaskBoard() {
   }, [board, serverTasks, tasksFromDb])
 
   function persistBoard(next: TaskBoardState) {
+    if (!sessionToken) return
     const serialized = flattenBoard(next).map((task, index) => ({
       taskId: task.id,
       title: task.title,
@@ -331,7 +338,7 @@ export function TaskBoard() {
       status: task.status,
       order: index,
     }))
-    void syncTasks({ tasks: serialized })
+    void syncTasks({ sessionToken, tasks: serialized })
   }
 
   function addTask() {

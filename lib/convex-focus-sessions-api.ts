@@ -2,17 +2,23 @@ import { api } from "@/convex/_generated/api"
 import type { FunctionReference } from "convex/server"
 
 type FocusSessionsApiShape = {
-  list: FunctionReference<"query", "public", Record<string, never>, unknown>
+  list: FunctionReference<
+    "query",
+    "public",
+    { sessionToken: string },
+    unknown
+  >
   ensureDefaults: FunctionReference<
     "mutation",
     "public",
-    Record<string, never>,
+    { sessionToken: string },
     unknown
   >
   create: FunctionReference<
     "mutation",
     "public",
     {
+      sessionToken: string
       sessionId: string
       intention: string
       reflection: string

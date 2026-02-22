@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/select"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import type { Id } from "@/convex/_generated/dataModel"
-import { DEMO_USER_ID } from "@/lib/demo-user"
+import { useAuth } from "@/components/providers/auth-provider"
 
 const iconMap: Record<RoomIconKey, LucideIcon> = {
   code: Code2,
@@ -63,13 +63,17 @@ function roomIcon(key: RoomIconKey) {
 
 export function RoomsGrid() {
   const router = useRouter()
+  const { user } = useAuth()
+  const userId = user?.id
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const joinedRoomIds = (useQuery(roomsApi.joinedRoomIdsByUser, {
-    userId: DEMO_USER_ID,
-  }) ?? []) as Id<"rooms">[]
-  const pinnedRoomIds = (useQuery(roomsApi.pinnedRoomIdsByUser, {
-    userId: DEMO_USER_ID,
-  }) ?? []) as Id<"rooms">[]
+  const joinedRoomIds = (useQuery(
+    roomsApi.joinedRoomIdsByUser,
+    userId ? { userId } : "skip"
+  ) ?? []) as Id<"rooms">[]
+  const pinnedRoomIds = (useQuery(
+    roomsApi.pinnedRoomIdsByUser,
+    userId ? { userId } : "skip"
+  ) ?? []) as Id<"rooms">[]
   const ensureDefaults = useMutation(roomsApi.ensureDefaults)
   const createRoomInDb = useMutation(roomsApi.create)
   const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
@@ -108,6 +112,7 @@ export function RoomsGrid() {
   }
 
   async function createRoom() {
+    if (!userId) return
     const trimmedName = name.trim()
     const trimmedDescription = description.trim()
     const trimmedMode = mode.trim()
@@ -121,17 +126,19 @@ export function RoomsGrid() {
       description: trimmedDescription,
       mode: trimmedMode,
       membersMax: safeMax,
+      userId,
     })
     resetForm()
     setIsDrawerOpen(false)
   }
 
   async function joinRoom(roomId: Id<"rooms">) {
+    if (!userId) return
     try {
       setJoinError(null)
       const result = await joinRoomInDb({
         roomId,
-        userId: DEMO_USER_ID,
+        userId,
       })
       router.push(`/dashboard/rooms/${result.roomId}`)
     } catch (error) {
@@ -141,13 +148,15 @@ export function RoomsGrid() {
   }
 
   async function leaveRoom(roomId: Id<"rooms">) {
+    if (!userId) return
     await leaveRoomInDb({
       roomId,
-      userId: DEMO_USER_ID,
+      userId,
     })
   }
 
   async function joinByCode() {
+    if (!userId) return
     const trimmedCode = joinCode.trim().toUpperCase()
     if (!trimmedCode) {
       setJoinError("Join code is required.")
@@ -158,7 +167,7 @@ export function RoomsGrid() {
       setJoinError(null)
       const result = await joinByCodeInDb({
         code: trimmedCode,
-        userId: DEMO_USER_ID,
+        userId,
       })
       setJoinCode("")
       setIsJoinDrawerOpen(false)
@@ -170,9 +179,10 @@ export function RoomsGrid() {
   }
 
   async function togglePin(roomId: Id<"rooms">) {
+    if (!userId) return
     await togglePinInDb({
       roomId,
-      userId: DEMO_USER_ID,
+      userId,
     })
   }
 

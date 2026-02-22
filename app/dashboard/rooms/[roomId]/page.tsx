@@ -3,16 +3,20 @@
 import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import type { Id } from "@/convex/_generated/dataModel"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { SiteHeader } from "@/components/site-header"
 import { RoomTaskBoard } from "@/components/rooms/room-task-board"
+import type { RoomTaskFocusTarget } from "@/components/rooms/room-task-board"
+import { RoomFocusPanel } from "@/components/rooms/room-focus-panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { useAuth } from "@/components/providers/auth-provider"
 import {
   SidebarInset,
   SidebarProvider,
@@ -29,10 +33,16 @@ type RoomDoc = {
 }
 
 export default function RoomPage() {
+  const router = useRouter()
+  const { user } = useAuth()
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
 
   const rooms = useQuery(roomsApi.list) as RoomDoc[] | undefined
+  const joinedRoomIds = (useQuery(
+    roomsApi.joinedRoomIdsByUser,
+    user ? { userId: user.id } : "skip"
+  ) ?? []) as Id<"rooms">[]
   const ensureDefaults = useMutation(roomsApi.ensureDefaults)
 
   React.useEffect(() => {
@@ -42,6 +52,20 @@ export default function RoomPage() {
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
     [roomId, rooms]
+  )
+  const isJoined = room ? joinedRoomIds.includes(room._id) : false
+
+  const startFocusFromTask = React.useCallback(
+    (task: RoomTaskFocusTarget) => {
+      if (!room) return
+      const query = new URLSearchParams({
+        roomId: room._id,
+        taskId: task.id,
+        intention: task.title,
+      })
+      router.push(`/dashboard/focus?${query.toString()}`)
+    },
+    [room, router]
   )
 
   return (
@@ -87,6 +111,18 @@ export default function RoomPage() {
                     {room.name}
                   </h1>
                   <p className="mt-2 text-muted-foreground">{room.description}</p>
+                  <div className="mt-4">
+                    <Button
+                      type="button"
+                      className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                      onClick={() => {
+                        const query = new URLSearchParams({ roomId: room._id })
+                        router.push(`/dashboard/focus?${query.toString()}`)
+                      }}
+                    >
+                      Start Room Focus
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
@@ -120,6 +156,24 @@ export default function RoomPage() {
                   </Card>
                 </div>
 
+                {!isJoined ? (
+                  <Card className="border-amber-500/20 bg-background/70">
+                    <CardHeader>
+                      <CardTitle>Join Required</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm text-muted-foreground">
+                      <p>Join this room to see live focus presence and room tasks.</p>
+                      <Button
+                        type="button"
+                        onClick={() => router.push("/dashboard")}
+                        className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                      >
+                        Back to Rooms
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 <Card className="border-cyan-500/20 bg-background/70">
                   <CardHeader>
                     <CardTitle>Room Workspace</CardTitle>
@@ -128,7 +182,15 @@ export default function RoomPage() {
                     <p>Manage room-specific work with assignees and status flow.</p>
                   </CardContent>
                 </Card>
-                <RoomTaskBoard roomId={room._id} />
+                {isJoined ? (
+                  <>
+                    <RoomFocusPanel roomId={room._id} />
+                    <RoomTaskBoard
+                      roomId={room._id}
+                      onStartFocusTask={startFocusFromTask}
+                    />
+                  </>
+                ) : null}
               </>
             ) : null}
           </div>

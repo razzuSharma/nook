@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import { tasksApi } from "@/lib/convex-tasks-api"
+import { useAuth } from "@/components/providers/auth-provider"
 import {
   SidebarInset,
   SidebarProvider,
@@ -94,15 +95,23 @@ function computeCurrentStreak(activeDayKeys: Set<string>) {
 }
 
 export default function ProgressPage() {
-  const focusDocs = useQuery(focusSessionsApi.list) as FocusSessionItem[] | undefined
-  const taskDocs = useQuery(tasksApi.list) as TaskItem[] | undefined
+  const { sessionToken } = useAuth()
+  const focusDocs = useQuery(
+    focusSessionsApi.list,
+    sessionToken ? { sessionToken } : "skip"
+  ) as FocusSessionItem[] | undefined
+  const taskDocs = useQuery(
+    tasksApi.list,
+    sessionToken ? { sessionToken } : "skip"
+  ) as TaskItem[] | undefined
   const ensureFocusDefaults = useMutation(focusSessionsApi.ensureDefaults)
   const ensureTaskDefaults = useMutation(tasksApi.ensureDefaults)
 
   React.useEffect(() => {
-    void ensureFocusDefaults({})
-    void ensureTaskDefaults({})
-  }, [ensureFocusDefaults, ensureTaskDefaults])
+    if (!sessionToken) return
+    void ensureFocusDefaults({ sessionToken })
+    void ensureTaskDefaults({ sessionToken })
+  }, [ensureFocusDefaults, ensureTaskDefaults, sessionToken])
 
   const summary = React.useMemo(() => {
     const sessions = focusDocs ?? []
