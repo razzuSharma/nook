@@ -23,11 +23,21 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery } from "convex/react"
-import { Edit3, GripVertical, Plus, Trash2, UserRound } from "lucide-react"
+import {
+  Edit3,
+  GripVertical,
+  Link2,
+  MessageSquare,
+  Plus,
+  Send,
+  Trash2,
+  UserRound,
+} from "lucide-react"
 
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { roomTaskChatApi } from "@/lib/convex-room-task-chat-api"
 import { useAuth } from "@/components/providers/auth-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -71,6 +81,36 @@ type RoomTask = {
   assigneeUserId?: string
   priority: TaskPriority
   status: TaskStatus
+  dueAt?: number
+}
+
+type TaskThreadData = {
+  messages: Array<{
+    id: string
+    body: string
+    createdAt: number
+    authorUserId: string
+    authorName: string
+    authorAvatarKey: string
+  }>
+  files: Array<{
+    id: string
+    name: string
+    url: string
+    createdAt: number
+    uploadedByUserId: string
+    uploadedByName: string
+    uploadedByAvatarKey: string
+  }>
+  events: Array<{
+    id: string
+    type: string
+    message: string
+    createdAt: number
+    actorUserId: string
+    actorName: string
+    actorAvatarKey: string
+  }>
 }
 
 export type RoomTaskFocusTarget = {
@@ -113,6 +153,7 @@ function tasksEqual(a: RoomTask[], b: RoomTask[]) {
       a[i].note !== b[i].note ||
       a[i].assignee !== b[i].assignee ||
       a[i].assigneeUserId !== b[i].assigneeUserId ||
+      a[i].dueAt !== b[i].dueAt ||
       a[i].priority !== b[i].priority ||
       a[i].status !== b[i].status
     ) {
@@ -134,14 +175,26 @@ function cardStatusClass(status: TaskStatus) {
   return "bg-amber-500/10"
 }
 
+function dueStateClass(dueAt?: number) {
+  if (!dueAt) return "text-muted-foreground"
+  const now = Date.now()
+  if (dueAt < now) return "text-red-600 dark:text-red-300"
+  if (dueAt - now < 24 * 60 * 60 * 1000) return "text-amber-600 dark:text-amber-300"
+  return "text-muted-foreground"
+}
+
 function TaskCard({
   task,
+  assigneeAvatarKey,
   onEdit,
   onStartFocus,
+  onDiscuss,
 }: {
   task: RoomTask
+  assigneeAvatarKey?: string
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
+  onDiscuss?: (task: RoomTask) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: task.id,
@@ -197,14 +250,54 @@ function TaskCard({
             <Edit3 className="size-4" />
             <span className="sr-only">Edit task</span>
           </Button>
+          {onDiscuss ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[10px]"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                onDiscuss(task)
+              }}
+            >
+              <MessageSquare className="size-3.5" />
+              Discuss
+            </Button>
+          ) : null}
         </div>
       </div>
       <p className="text-xs text-muted-foreground">{task.note}</p>
+      {task.dueAt ? (
+        <p className={cn("mt-2 text-xs", dueStateClass(task.dueAt))}>
+          Due {new Date(task.dueAt).toLocaleString()}
+        </p>
+      ) : null}
       <div className="mt-3 flex items-center justify-between">
-        <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-          <UserRound className="size-3.5" />
-          {task.assignee || "Unassigned"}
-        </div>
+        {task.assigneeUserId && task.assignee ? (
+          <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+            <Avatar className="size-5 border border-cyan-500/25">
+              <AvatarImage
+                src={avatarSrcForKey(assigneeAvatarKey)}
+                alt={task.assignee}
+              />
+              <AvatarFallback>
+                {task.assignee
+                  .split(" ")
+                  .map((part) => part[0] ?? "")
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            {task.assignee}
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <UserRound className="size-3.5" />
+            Unassigned
+          </div>
+        )}
         <span className="text-xs text-muted-foreground">Drag to reorder</span>
       </div>
     </article>
@@ -239,7 +332,7 @@ export function RoomTaskBoard({
   roomId: Id<"rooms">
   onStartFocusTask?: (task: RoomTaskFocusTarget) => void
 }) {
-  const { sessionToken } = useAuth()
+  const { sessionToken, user } = useAuth()
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
     | Array<{
         taskId: string
@@ -249,6 +342,7 @@ export function RoomTaskBoard({
         assigneeUserId?: string
         priority: TaskPriority
         status: TaskStatus
+        dueAt?: number
       }>
     | undefined
   const membersQuery = useQuery(
@@ -261,8 +355,16 @@ export function RoomTaskBoard({
     () => new Map(members.map((member) => [member.userId, member.name])),
     [members]
   )
+  const memberAvatarById = React.useMemo(
+    () => new Map(members.map((member) => [member.userId, member.avatarKey])),
+    [members]
+  )
 
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
+  const sendThreadMessage = useMutation(roomTaskChatApi.sendMessage)
+  const shareThreadFile = useMutation(roomTaskChatApi.shareFile)
+  const generateThreadUploadUrl = useMutation(roomTaskChatApi.generateUploadUrl)
+  const shareUploadedThreadFile = useMutation(roomTaskChatApi.shareUploadedFile)
 
   const serverTasks = React.useMemo(() => {
     if (!docs) return []
@@ -274,6 +376,7 @@ export function RoomTaskBoard({
       assigneeUserId: task.assigneeUserId,
       priority: task.priority,
       status: task.status,
+      dueAt: task.dueAt,
     }))
   }, [docs])
 
@@ -282,6 +385,7 @@ export function RoomTaskBoard({
   const [draftNote, setDraftNote] = React.useState("")
   const [draftAssigneeUserId, setDraftAssigneeUserId] = React.useState("none")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
+  const [draftDueAt, setDraftDueAt] = React.useState("")
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null)
   const [editTitle, setEditTitle] = React.useState("")
@@ -289,6 +393,20 @@ export function RoomTaskBoard({
   const [editAssigneeUserId, setEditAssigneeUserId] = React.useState("none")
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("medium")
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
+  const [editDueAt, setEditDueAt] = React.useState("")
+  const [threadTaskId, setThreadTaskId] = React.useState<string | null>(null)
+  const [threadMessage, setThreadMessage] = React.useState("")
+  const [threadFileName, setThreadFileName] = React.useState("")
+  const [threadFileUrl, setThreadFileUrl] = React.useState("")
+  const [threadUploadFile, setThreadUploadFile] = React.useState<File | null>(null)
+  const [threadError, setThreadError] = React.useState<string | null>(null)
+
+  const thread = useQuery(
+    roomTaskChatApi.listThread,
+    sessionToken && threadTaskId
+      ? { sessionToken, roomId, taskId: threadTaskId }
+      : "skip"
+  ) as TaskThreadData | undefined
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -311,10 +429,12 @@ export function RoomTaskBoard({
       assigneeUserId: task.assigneeUserId as Id<"users"> | undefined,
       priority: task.priority,
       status: task.status,
+      dueAt: task.dueAt,
       order: index,
     }))
     void syncByRoom({
       roomId,
+      actorUserId: user?.id,
       tasks: payload,
     })
   }
@@ -349,6 +469,96 @@ export function RoomTaskBoard({
     return null
   }, [editingTaskId, board])
 
+  const threadTask = React.useMemo(() => {
+    if (!threadTaskId) return null
+    for (const status of statusOrder) {
+      const task = board[status].find((item) => item.id === threadTaskId)
+      if (task) return task
+    }
+    return null
+  }, [threadTaskId, board])
+
+  async function postThreadMessage() {
+    if (!sessionToken || !threadTaskId) return
+    const body = threadMessage.trim()
+    if (!body) return
+
+    setThreadError(null)
+    try {
+      await sendThreadMessage({
+        sessionToken,
+        roomId,
+        taskId: threadTaskId,
+        body,
+      })
+      setThreadMessage("")
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : "Unable to send message.")
+    }
+  }
+
+  async function postThreadFile() {
+    if (!sessionToken || !threadTaskId) return
+    const name = threadFileName.trim()
+    const url = threadFileUrl.trim()
+    if (!name || !url) return
+
+    setThreadError(null)
+    try {
+      await shareThreadFile({
+        sessionToken,
+        roomId,
+        taskId: threadTaskId,
+        name,
+        url,
+      })
+      setThreadFileName("")
+      setThreadFileUrl("")
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : "Unable to share file.")
+    }
+  }
+
+  async function uploadThreadFile() {
+    if (!sessionToken || !threadTaskId || !threadUploadFile) return
+
+    setThreadError(null)
+    try {
+      const { uploadUrl } = await generateThreadUploadUrl({
+        sessionToken,
+        roomId,
+        taskId: threadTaskId,
+      })
+
+      const uploadResult = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": threadUploadFile.type || "application/octet-stream",
+        },
+        body: threadUploadFile,
+      })
+
+      if (!uploadResult.ok) {
+        throw new Error("Upload failed.")
+      }
+
+      const { storageId } = (await uploadResult.json()) as { storageId: Id<"_storage"> }
+      await shareUploadedThreadFile({
+        sessionToken,
+        roomId,
+        taskId: threadTaskId,
+        name: threadUploadFile.name,
+        storageId,
+        mimeType: threadUploadFile.type || undefined,
+        sizeBytes: threadUploadFile.size,
+      })
+
+      setThreadUploadFile(null)
+    } catch (error) {
+      setThreadError(error instanceof Error ? error.message : "Unable to upload file.")
+    }
+  }
+
   function addTask() {
     const title = draftTitle.trim()
     const note = draftNote.trim()
@@ -356,6 +566,7 @@ export function RoomTaskBoard({
 
     const assigneeUserId = draftAssigneeUserId === "none" ? undefined : draftAssigneeUserId
     const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
+    const dueAt = draftDueAt ? new Date(draftDueAt).getTime() : undefined
 
     const task: RoomTask = {
       id: `rt-${Date.now()}`,
@@ -365,6 +576,7 @@ export function RoomTaskBoard({
       assigneeUserId,
       priority: draftPriority,
       status: "todo",
+      dueAt,
     }
 
     setBoard((prev) => {
@@ -379,6 +591,7 @@ export function RoomTaskBoard({
     setDraftNote("")
     setDraftAssigneeUserId("none")
     setDraftPriority("medium")
+    setDraftDueAt("")
   }
 
   function openEdit(task: RoomTask) {
@@ -388,6 +601,7 @@ export function RoomTaskBoard({
     setEditAssigneeUserId(task.assigneeUserId ?? "none")
     setEditPriority(task.priority)
     setEditStatus(task.status)
+    setEditDueAt(task.dueAt ? new Date(task.dueAt).toISOString().slice(0, 16) : "")
   }
 
   function saveTaskEdit() {
@@ -395,6 +609,7 @@ export function RoomTaskBoard({
     const nextStatus = editStatus
     const assigneeUserId = editAssigneeUserId === "none" ? undefined : editAssigneeUserId
     const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
+    const dueAt = editDueAt ? new Date(editDueAt).getTime() : undefined
 
     setBoard((prev) => {
       const next = { ...prev }
@@ -410,6 +625,7 @@ export function RoomTaskBoard({
             assigneeUserId,
             priority: editPriority,
             status: nextStatus,
+            dueAt,
           }
           return false
         })
@@ -532,7 +748,7 @@ export function RoomTaskBoard({
             placeholder="What needs to be done?"
             className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
           />
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
               <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
                 <SelectValue placeholder="Assign to" />
@@ -559,6 +775,12 @@ export function RoomTaskBoard({
                 <SelectItem value="high">High</SelectItem>
               </SelectContent>
             </Select>
+            <Input
+              type="datetime-local"
+              value={draftDueAt}
+              onChange={(event) => setDraftDueAt(event.target.value)}
+              className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+            />
             <Button
               type="button"
               onClick={addTask}
@@ -667,8 +889,17 @@ export function RoomTaskBoard({
                       <TaskCard
                         key={task.id}
                         task={task}
+                        assigneeAvatarKey={
+                          task.assigneeUserId
+                            ? memberAvatarById.get(task.assigneeUserId)
+                            : undefined
+                        }
                         onEdit={openEdit}
                         onStartFocus={onStartFocusTask}
+                        onDiscuss={(selectedTask) => {
+                          setThreadTaskId(selectedTask.id)
+                          setThreadError(null)
+                        }}
                       />
                     ))}
                   </div>
@@ -687,9 +918,29 @@ export function RoomTaskBoard({
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground">{activeTask.note}</p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Assigned: {activeTask.assignee || "Unassigned"}
-              </p>
+              {activeTask.assigneeUserId && activeTask.assignee ? (
+                <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <Avatar className="size-5 border border-cyan-500/25">
+                    <AvatarImage
+                      src={avatarSrcForKey(
+                        memberAvatarById.get(activeTask.assigneeUserId)
+                      )}
+                      alt={activeTask.assignee}
+                    />
+                    <AvatarFallback>
+                      {activeTask.assignee
+                        .split(" ")
+                        .map((part) => part[0] ?? "")
+                        .join("")
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  Assigned: {activeTask.assignee}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">Assigned: Unassigned</p>
+              )}
             </article>
           ) : null}
         </DragOverlay>
@@ -754,6 +1005,11 @@ export function RoomTaskBoard({
                 </SelectContent>
               </Select>
             </div>
+            <Input
+              type="datetime-local"
+              value={editDueAt}
+              onChange={(event) => setEditDueAt(event.target.value)}
+            />
           </div>
           <DrawerFooter>
             <Button
@@ -770,6 +1026,219 @@ export function RoomTaskBoard({
             ) : null}
             <Button variant="outline" onClick={() => setEditingTaskId(null)}>
               Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
+      <Drawer
+        open={Boolean(threadTaskId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setThreadTaskId(null)
+            setThreadError(null)
+          }
+        }}
+      >
+        <DrawerContent className="max-h-[90vh]">
+          <DrawerHeader>
+            <DrawerTitle>Task Discussion</DrawerTitle>
+            <DrawerDescription>
+              {threadTask ? `${threadTask.title}` : "Discuss this task and share files."}
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="space-y-4 overflow-y-auto px-4 pb-2">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Chat</p>
+              <div className="max-h-60 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+                {thread === undefined ? (
+                  <p className="text-xs text-muted-foreground">Loading thread...</p>
+                ) : thread.messages.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No messages yet.</p>
+                ) : (
+                  thread.messages.map((message) => {
+                    const isMe = Boolean(user?.id && message.authorUserId === user.id)
+                    return (
+                      <article
+                        key={message.id}
+                        className={cn(
+                          "rounded-md border px-3 py-2 text-sm",
+                          isMe
+                            ? "border-cyan-500/35 bg-cyan-500/10"
+                            : "border-[color:var(--nook-sidebar-border)] bg-background/70"
+                        )}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <div className="inline-flex items-center gap-2">
+                            <Avatar className="size-6 border border-cyan-500/25">
+                              <AvatarImage
+                                src={avatarSrcForKey(message.authorAvatarKey)}
+                                alt={message.authorName}
+                              />
+                              <AvatarFallback>
+                                {message.authorName
+                                  .split(" ")
+                                  .map((part) => part[0] ?? "")
+                                  .join("")
+                                  .slice(0, 2)
+                                  .toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="text-xs font-medium">{message.authorName}</span>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {new Date(message.createdAt).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <p className="text-sm">{message.body}</p>
+                      </article>
+                    )
+                  })
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={threadMessage}
+                  onChange={(event) => setThreadMessage(event.target.value)}
+                  placeholder="Write a message about this task..."
+                />
+                <Button
+                  type="button"
+                  onClick={() => {
+                    void postThreadMessage()
+                  }}
+                  className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
+                >
+                  <Send className="size-4" />
+                  Send
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Files</p>
+              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+                {thread === undefined ? (
+                  <p className="text-xs text-muted-foreground">Loading files...</p>
+                ) : thread.files.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No files shared yet.</p>
+                ) : (
+                  thread.files.map((file) => (
+                    <article
+                      key={file.id}
+                      className="rounded-md border border-[color:var(--nook-sidebar-border)] bg-background/70 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-700 underline dark:text-cyan-300"
+                        >
+                          <Link2 className="size-3.5" />
+                          {file.name}
+                        </a>
+                        <span className="text-[11px] text-muted-foreground">
+                          {new Date(file.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Shared by {file.uploadedByName}
+                      </p>
+                    </article>
+                  ))
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  value={threadFileName}
+                  onChange={(event) => setThreadFileName(event.target.value)}
+                  placeholder="File name (e.g. API spec)"
+                />
+                <Input
+                  value={threadFileUrl}
+                  onChange={(event) => setThreadFileUrl(event.target.value)}
+                  placeholder="https://..."
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    void postThreadFile()
+                  }}
+                >
+                  <Link2 className="size-4" />
+                  Share File Link
+                </Button>
+                <Input
+                  type="file"
+                  onChange={(event) =>
+                    setThreadUploadFile(event.target.files?.[0] ?? null)
+                  }
+                  className="max-w-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!threadUploadFile}
+                  onClick={() => {
+                    void uploadThreadFile()
+                  }}
+                >
+                  Upload File
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Task History</p>
+              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+                {thread === undefined ? (
+                  <p className="text-xs text-muted-foreground">Loading history...</p>
+                ) : thread.events.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No history yet.</p>
+                ) : (
+                  thread.events.map((event) => (
+                    <article
+                      key={event.id}
+                      className="rounded-md border border-[color:var(--nook-sidebar-border)] bg-background/70 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="inline-flex items-center gap-2">
+                          <Avatar className="size-6 border border-cyan-500/25">
+                            <AvatarImage
+                              src={avatarSrcForKey(event.actorAvatarKey)}
+                              alt={event.actorName}
+                            />
+                            <AvatarFallback>
+                              {event.actorName
+                                .split(" ")
+                                .map((part) => part[0] ?? "")
+                                .join("")
+                                .slice(0, 2)
+                                .toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs font-medium">{event.actorName}</span>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">
+                          {new Date(event.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{event.message}</p>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {threadError ? <p className="text-sm text-red-600">{threadError}</p> : null}
+          </div>
+          <DrawerFooter>
+            <Button variant="outline" onClick={() => setThreadTaskId(null)}>
+              Close
             </Button>
           </DrawerFooter>
         </DrawerContent>

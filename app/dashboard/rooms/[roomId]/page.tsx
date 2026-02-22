@@ -9,8 +9,6 @@ import type { Id } from "@/convex/_generated/dataModel"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { SiteHeader } from "@/components/site-header"
-import { RoomTaskBoard } from "@/components/rooms/room-task-board"
-import type { RoomTaskFocusTarget } from "@/components/rooms/room-task-board"
 import { RoomFocusPanel } from "@/components/rooms/room-focus-panel"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -21,10 +19,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomInvitesApi } from "@/lib/convex-room-invites-api"
+import { avatarSrcForKey } from "@/lib/avatar-options"
 import { useAuth } from "@/components/providers/auth-provider"
 import {
   SidebarInset,
@@ -70,6 +78,7 @@ export default function RoomPage() {
   )
   const [inviteLink, setInviteLink] = React.useState<string | null>(null)
   const [inviteError, setInviteError] = React.useState<string | null>(null)
+  const [isInviteDrawerOpen, setIsInviteDrawerOpen] = React.useState(false)
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
@@ -100,19 +109,15 @@ export default function RoomPage() {
     void ensureDefaults({})
   }, [ensureDefaults])
 
-
-  const startFocusFromTask = React.useCallback(
-    (task: RoomTaskFocusTarget) => {
-      if (!room) return
-      const query = new URLSearchParams({
-        roomId: room._id,
-        taskId: task.id,
-        intention: task.title,
-      })
-      router.push(`/dashboard/focus?${query.toString()}`)
-    },
-    [room, router]
-  )
+  React.useEffect(() => {
+    function onOpenRoomInvite() {
+      setIsInviteDrawerOpen(true)
+    }
+    window.addEventListener("nook:open-room-invite", onOpenRoomInvite)
+    return () => {
+      window.removeEventListener("nook:open-room-invite", onOpenRoomInvite)
+    }
+  }, [])
 
   const sendInvite = React.useCallback(async () => {
     if (!room || !sessionToken) return
@@ -144,7 +149,11 @@ export default function RoomPage() {
     >
       <AppSidebar variant="sidebar" />
       <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
-        <SiteHeader currentPage={room ? room.name : "Room"} actionLabel="Invite" />
+        <SiteHeader
+          currentPage={room ? room.name : "Room"}
+          actionLabel="Invite"
+          actionEventName="nook:open-room-invite"
+        />
         <div className="flex flex-1 flex-col px-4 py-5 md:px-6 md:py-6 lg:pr-20">
           <div className="mx-auto w-full max-w-6xl space-y-5">
             {!rooms ? (
@@ -176,6 +185,20 @@ export default function RoomPage() {
                     {room.name}
                   </h1>
                   <p className="mt-2 text-muted-foreground">{room.description}</p>
+                  <div className="mt-4 flex items-center gap-2">
+                    <Link
+                      href={`/dashboard/rooms/${room._id}`}
+                      className="rounded-md border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs font-medium text-cyan-800 dark:text-cyan-200"
+                    >
+                      Overview
+                    </Link>
+                    <Link
+                      href={`/dashboard/rooms/${room._id}/tasks`}
+                      className="rounded-md border border-cyan-500/20 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-cyan-500/35 hover:text-foreground"
+                    >
+                      Task Board
+                    </Link>
+                  </div>
                   <div className="mt-4">
                     <Button
                       type="button"
@@ -237,98 +260,7 @@ export default function RoomPage() {
                   </Card>
                 </div>
 
-                {isJoined ? (
-                  <Card className="border-cyan-500/20 bg-background/70">
-                    <CardHeader>
-                      <CardTitle>Invite Members</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <Input
-                          value={inviteEmail}
-                          onChange={(event) => setInviteEmail(event.target.value)}
-                          placeholder="teammate@example.com"
-                          type="email"
-                        />
-                        <Select
-                          value={inviteRole}
-                          onValueChange={(value) =>
-                            setInviteRole(value as "viewer" | "member" | "admin")
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Role" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="viewer">Viewer</SelectItem>
-                            <SelectItem value="member">Member</SelectItem>
-                            <SelectItem value="admin">Admin</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-                          onClick={() => {
-                            void sendInvite()
-                          }}
-                        >
-                          Send Invite
-                        </Button>
-                      </div>
-                      {inviteError ? (
-                        <p className="text-sm text-red-600">{inviteError}</p>
-                      ) : null}
-                      {inviteLink ? (
-                        <div className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs">
-                          <p className="font-medium">Invite link (dev fallback)</p>
-                          <a
-                            href={inviteLink}
-                            className="mt-1 block break-all text-cyan-700 underline dark:text-cyan-300"
-                          >
-                            {inviteLink}
-                          </a>
-                        </div>
-                      ) : null}
-                      <div className="space-y-2">
-                        <p className="text-sm font-medium">Pending invites</p>
-                        {roomInvites.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">No pending invites.</p>
-                        ) : (
-                          <ul className="space-y-2">
-                            {roomInvites.map((invite) => (
-                              <li
-                                key={invite._id}
-                                className="flex items-center justify-between rounded-md border border-cyan-500/15 px-3 py-2 text-sm"
-                              >
-                                <div>
-                                  <p className="font-medium">{invite.email}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {invite.role} • expires{" "}
-                                    {new Date(invite.expiresAt).toLocaleDateString()}
-                                  </p>
-                                </div>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    if (!sessionToken) return
-                                    void revokeInvite({
-                                      sessionToken,
-                                      inviteId: invite._id,
-                                    })
-                                  }}
-                                >
-                                  Revoke
-                                </Button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : null}
+                
 
                 {!isJoined ? (
                   <Card className="border-amber-500/20 bg-background/70">
@@ -347,15 +279,6 @@ export default function RoomPage() {
                     </CardContent>
                   </Card>
                 ) : null}
-
-                <Card className="border-cyan-500/20 bg-background/70">
-                  <CardHeader>
-                    <CardTitle>Room Workspace</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 text-sm text-muted-foreground">
-                    <p>Manage room-specific work with assignees and status flow.</p>
-                  </CardContent>
-                </Card>
                 {isJoined ? (
                   <>
                     <Card className="border-cyan-500/20 bg-background/70">
@@ -367,22 +290,49 @@ export default function RoomPage() {
                           {roomMembers.map((member) => (
                             <li
                               key={member.userId}
-                              className="rounded-md border border-cyan-500/15 px-3 py-2"
+                              className="flex items-center gap-3 rounded-md border border-cyan-500/15 px-3 py-2"
                             >
-                              <p className="text-sm font-medium">{member.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {member.email} • {member.role}
-                              </p>
+                              <Avatar className="size-9 border border-cyan-500/30">
+                                <AvatarImage
+                                  src={avatarSrcForKey(member.avatarKey)}
+                                  alt={member.name}
+                                />
+                                <AvatarFallback>
+                                  {member.name
+                                    .split(" ")
+                                    .map((part) => part[0] ?? "")
+                                    .join("")
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <p className="text-sm font-medium">{member.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {member.email} • {member.role}
+                                </p>
+                              </div>
                             </li>
                           ))}
                         </ul>
                       </CardContent>
                     </Card>
                     <RoomFocusPanel roomId={room._id} />
-                    <RoomTaskBoard
-                      roomId={room._id}
-                      onStartFocusTask={startFocusFromTask}
-                    />
+                    <Card className="border-cyan-500/20 bg-background/70">
+                      <CardHeader>
+                        <CardTitle>Room Workspace</CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex items-center justify-between gap-3">
+                        <p className="text-sm text-muted-foreground">
+                          Open Task Board for task creation, kanban workflow, and member progress.
+                        </p>
+                        <Button asChild className="bg-cyan-500 text-slate-950 hover:bg-cyan-400">
+                          <Link href={`/dashboard/rooms/${room._id}/tasks`}>
+                            Open Task Board
+                          </Link>
+                        </Button>
+                      </CardContent>
+                    </Card>
                   </>
                 ) : null}
               </>
@@ -391,6 +341,101 @@ export default function RoomPage() {
         </div>
       </SidebarInset>
       <RightSidebar />
+      <Drawer open={isInviteDrawerOpen} onOpenChange={setIsInviteDrawerOpen}>
+        <DrawerContent className="border-cyan-500/20">
+          <DrawerHeader>
+            <DrawerTitle>Invite Members</DrawerTitle>
+            <DrawerDescription>
+              Send invite links and manage pending invites for this room.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="space-y-4 px-4 pb-2">
+            <div className="grid gap-3 md:grid-cols-3">
+              <Input
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+                placeholder="teammate@example.com"
+                type="email"
+              />
+              <Select
+                value={inviteRole}
+                onValueChange={(value) => setInviteRole(value as "viewer" | "member" | "admin")}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="viewer">Viewer</SelectItem>
+                  <SelectItem value="member">Member</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                onClick={() => {
+                  void sendInvite()
+                }}
+              >
+                Send Invite
+              </Button>
+            </div>
+            {inviteError ? <p className="text-sm text-red-600">{inviteError}</p> : null}
+            {inviteLink ? (
+              <div className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-xs">
+                <p className="font-medium">Invite link (dev fallback)</p>
+                <a
+                  href={inviteLink}
+                  className="mt-1 block break-all text-cyan-700 underline dark:text-cyan-300"
+                >
+                  {inviteLink}
+                </a>
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Pending invites</p>
+              {roomInvites.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No pending invites.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {roomInvites.map((invite) => (
+                    <li
+                      key={invite._id}
+                      className="flex items-center justify-between rounded-md border border-cyan-500/15 px-3 py-2 text-sm"
+                    >
+                      <div>
+                        <p className="font-medium">{invite.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {invite.role} • expires {new Date(invite.expiresAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (!sessionToken) return
+                          void revokeInvite({
+                            sessionToken,
+                            inviteId: invite._id,
+                          })
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          <DrawerFooter>
+            <Button variant="outline" onClick={() => setIsInviteDrawerOpen(false)}>
+              Close
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
     </SidebarProvider>
   )
 }

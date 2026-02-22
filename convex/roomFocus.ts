@@ -102,6 +102,7 @@ export const listPresence = query({
           userId: doc.userId,
           userName: user?.name ?? "Unknown User",
           userEmail: user?.email ?? "",
+          userAvatarKey: user?.avatarKey ?? "avatar-1",
           status: doc.status,
           intention: doc.intention,
           taskId: doc.taskId,

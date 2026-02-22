@@ -9,9 +9,11 @@ import { ChevronRight, Plus } from "lucide-react"
 export function SiteHeader({
   currentPage = "Home Dashboard",
   actionLabel = "New Room",
+  actionEventName = "nook:create-room",
 }: {
   currentPage?: string
   actionLabel?: string
+  actionEventName?: string
 }) {
   return (
     <header className="flex h-(--header-height) shrink-0 items-center border-b border-cyan-500/15 bg-background/70 backdrop-blur transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
@@ -30,7 +32,7 @@ export function SiteHeader({
             size="sm"
             className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
             onClick={() => {
-              window.dispatchEvent(new Event("nook:create-room"))
+              window.dispatchEvent(new Event(actionEventName))
             }}
           >
             <Plus />

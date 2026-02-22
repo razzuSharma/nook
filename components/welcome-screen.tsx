@@ -19,7 +19,7 @@ export function WelcomeScreen() {
       <section className="relative w-full max-w-3xl rounded-3xl border border-nook-sidebar-border bg-background/70 p-6 text-center shadow-2xl backdrop-blur-xl md:p-10">
         <div className="animate-[nook-glow_2.6s_ease-in-out_infinite] mx-auto mb-4 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full">
           <img src="/nook-logo.png" alt="Nook logo" className="size-full object-cover mt-1 dark:block hidden" />
-          <img src="/nook-logo-light.png" alt="Nook logo" className="size-full scale-[1] -translate-x-[0px] object-cover mt-0 dark:hidden block" />
+          <img src="/nook-logo-light.png" alt="Nook logo" className="size-full scale-[1] translate-x-0 object-cover mt-0 dark:hidden block" />
         </div>
         <p className="text-sm font-medium tracking-wide text-muted-foreground">
           Welcome to Nook
