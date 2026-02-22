@@ -78,6 +78,7 @@ export default defineSchema({
     status: v.union(
       v.literal("todo"),
       v.literal("working"),
+      v.literal("blocked"),
       v.literal("completed")
     ),
     order: v.number(),
