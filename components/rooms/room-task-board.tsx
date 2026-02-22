@@ -24,12 +24,17 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery } from "convex/react"
 import {
-  Edit3,
+  ChevronDown,
+  ChevronUp,
   GripVertical,
+  Info,
   Link2,
-  MessageSquare,
+  MoreHorizontal,
+  PauseCircle,
   Plus,
+  Search,
   Send,
+  SlidersHorizontal,
   Trash2,
   UserRound,
 } from "lucide-react"
@@ -59,10 +64,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { avatarSrcForKey } from "@/lib/avatar-options"
 import { cn } from "@/lib/utils"
 
-type TaskStatus = "todo" | "working" | "completed"
+type TaskStatus = "todo" | "working" | "blocked" | "completed"
 type TaskPriority = "low" | "medium" | "high"
 
 type RoomMember = {
@@ -119,6 +138,10 @@ export type RoomTaskFocusTarget = {
 }
 
 type TaskBoardState = Record<TaskStatus, RoomTask[]>
+type DueFilter = "all" | "overdue" | "today" | "week" | "none"
+type AssigneeFilter = "all" | "mine" | "none" | string
+type PriorityFilter = "all" | TaskPriority
+type SortMode = "manual" | "priority" | "due_soon"
 
 const boardColumns: Array<{
   id: TaskStatus
@@ -127,15 +150,17 @@ const boardColumns: Array<{
 }> = [
   { id: "todo", label: "To Do", subtitle: "Planned next" },
   { id: "working", label: "In Progress", subtitle: "Being built now" },
+  { id: "blocked", label: "Blocked", subtitle: "Needs unblock" },
   { id: "completed", label: "Completed", subtitle: "Done and verified" },
 ]
 
-const statusOrder: TaskStatus[] = ["todo", "working", "completed"]
+const statusOrder: TaskStatus[] = ["todo", "working", "blocked", "completed"]
 
 function toBoardState(tasks: RoomTask[]): TaskBoardState {
   return {
     todo: tasks.filter((task) => task.status === "todo"),
     working: tasks.filter((task) => task.status === "working"),
+    blocked: tasks.filter((task) => task.status === "blocked"),
     completed: tasks.filter((task) => task.status === "completed"),
   }
 }
@@ -171,6 +196,7 @@ function priorityClass(priority: TaskPriority) {
 
 function cardStatusClass(status: TaskStatus) {
   if (status === "completed") return "bg-emerald-500/12"
+  if (status === "blocked") return "bg-rose-500/12"
   if (status === "working") return "bg-cyan-500/10"
   return "bg-amber-500/10"
 }
@@ -183,99 +209,176 @@ function dueStateClass(dueAt?: number) {
   return "text-muted-foreground"
 }
 
-function TaskCard({
+function isTaskDueToday(dueAt: number) {
+  const now = new Date()
+  const due = new Date(dueAt)
+  return (
+    due.getFullYear() === now.getFullYear() &&
+    due.getMonth() === now.getMonth() &&
+    due.getDate() === now.getDate()
+  )
+}
+
+function isTaskDueThisWeek(dueAt: number) {
+  const now = Date.now()
+  const inAWeek = now + 7 * 24 * 60 * 60 * 1000
+  return dueAt >= now && dueAt <= inAWeek
+}
+
+function taskMatchesFilters(
+  task: RoomTask,
+  opts: {
+    search: string
+    assignee: AssigneeFilter
+    priority: PriorityFilter
+    due: DueFilter
+    userId?: string
+  }
+) {
+  const search = opts.search.trim().toLowerCase()
+  if (
+    search &&
+    !`${task.title} ${task.note} ${task.assignee}`.toLowerCase().includes(search)
+  ) {
+    return false
+  }
+
+  if (opts.assignee === "mine") {
+    if (!opts.userId || task.assigneeUserId !== opts.userId) return false
+  } else if (opts.assignee === "none") {
+    if (task.assigneeUserId) return false
+  } else if (opts.assignee !== "all" && task.assigneeUserId !== opts.assignee) {
+    return false
+  }
+
+  if (opts.priority !== "all" && task.priority !== opts.priority) {
+    return false
+  }
+
+  if (opts.due === "none") return !task.dueAt
+  if (!task.dueAt && opts.due !== "all") return false
+  if (opts.due === "overdue" && task.dueAt && task.dueAt >= Date.now()) return false
+  if (opts.due === "today" && task.dueAt && !isTaskDueToday(task.dueAt)) return false
+  if (opts.due === "week" && task.dueAt && !isTaskDueThisWeek(task.dueAt)) return false
+
+  return true
+}
+
+function sortTasks(tasks: RoomTask[], mode: SortMode) {
+  if (mode === "manual") return tasks
+  const copy = [...tasks]
+  if (mode === "priority") {
+    const score: Record<TaskPriority, number> = { high: 0, medium: 1, low: 2 }
+    return copy.sort((left, right) => score[left.priority] - score[right.priority])
+  }
+  return copy.sort((left, right) => {
+    if (!left.dueAt && !right.dueAt) return 0
+    if (!left.dueAt) return 1
+    if (!right.dueAt) return -1
+    return left.dueAt - right.dueAt
+  })
+}
+
+function BaseTaskCard({
   task,
   assigneeAvatarKey,
   onEdit,
   onStartFocus,
   onDiscuss,
+  dragHandle,
+  isDraggable = false,
 }: {
   task: RoomTask
   assigneeAvatarKey?: string
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
+  dragHandle?: React.HTMLAttributes<HTMLElement>
+  isDraggable?: boolean
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
-    id: task.id,
-  })
+  const hasActions = Boolean(onStartFocus || onDiscuss || onEdit)
 
   return (
     <article
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-      }}
       className={cn(
-        "cursor-grab rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3 active:cursor-grabbing",
+        "rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3",
+        isDraggable && "cursor-grab active:cursor-grabbing",
         cardStatusClass(task.status)
       )}
-      {...attributes}
-      {...listeners}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-2">
-          <GripVertical className="mt-0.5 size-4 text-muted-foreground" />
-          <h4 className="text-sm font-medium">{task.title}</h4>
+          {isDraggable ? (
+            <GripVertical
+              className="mt-0.5 size-4 text-muted-foreground"
+              {...dragHandle}
+            />
+          ) : (
+            <PauseCircle className="mt-0.5 size-4 text-muted-foreground" />
+          )}
+          <h4 className="line-clamp-2 text-sm font-semibold leading-5">{task.title}</h4>
         </div>
-        <div className="flex items-center gap-2">
-          {onStartFocus ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-[10px]"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                onStartFocus({ id: task.id, title: task.title })
-              }}
-            >
-              Focus
-            </Button>
-          ) : null}
+        <div className="flex items-center gap-1">
           <Badge className={cn("capitalize", priorityClass(task.priority))}>
             {task.priority}
           </Badge>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation()
-              onEdit(task)
-            }}
-          >
-            <Edit3 className="size-4" />
-            <span className="sr-only">Edit task</span>
-          </Button>
-          {onDiscuss ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 px-2 text-[10px]"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                onDiscuss(task)
-              }}
-            >
-              <MessageSquare className="size-3.5" />
-              Discuss
-            </Button>
+          {hasActions ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <MoreHorizontal className="size-4" />
+                  <span className="sr-only">Task actions</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {onStartFocus ? (
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      onStartFocus({ id: task.id, title: task.title })
+                    }}
+                  >
+                    Focus Task
+                  </DropdownMenuItem>
+                ) : null}
+                {onDiscuss ? (
+                  <DropdownMenuItem
+                    onSelect={(event) => {
+                      event.preventDefault()
+                      onDiscuss(task)
+                    }}
+                  >
+                    Discuss Task
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    onEdit(task)
+                  }}
+                >
+                  Edit Task
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">{task.note}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">{task.note}</p>
       {task.dueAt ? (
         <p className={cn("mt-2 text-xs", dueStateClass(task.dueAt))}>
           Due {new Date(task.dueAt).toLocaleString()}
         </p>
       ) : null}
-      <div className="mt-3 flex items-center justify-between">
+      <div className="mt-3 flex items-center gap-2">
         {task.assigneeUserId && task.assignee ? (
-          <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="inline-flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <Avatar className="size-5 border border-cyan-500/25">
               <AvatarImage
                 src={avatarSrcForKey(assigneeAvatarKey)}
@@ -290,7 +393,7 @@ function TaskCard({
                   .toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            {task.assignee}
+            <span className="truncate">{task.assignee}</span>
           </div>
         ) : (
           <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -298,18 +401,48 @@ function TaskCard({
             Unassigned
           </div>
         )}
-        <span className="text-xs text-muted-foreground">Drag to reorder</span>
       </div>
     </article>
+  )
+}
+
+function SortableTaskCard(props: {
+  task: RoomTask
+  assigneeAvatarKey?: string
+  onEdit: (task: RoomTask) => void
+  onStartFocus?: (task: RoomTaskFocusTarget) => void
+  onDiscuss?: (task: RoomTask) => void
+}) {
+  const { task } = props
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: task.id,
+  })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+    >
+      <BaseTaskCard
+        {...props}
+        isDraggable
+        dragHandle={{ ...attributes, ...listeners }}
+      />
+    </div>
   )
 }
 
 function ColumnDropZone({
   id,
   children,
+  muted = false,
 }: {
   id: TaskStatus
   children: React.ReactNode
+  muted?: boolean
 }) {
   const { setNodeRef, isOver } = useDroppable({ id })
   return (
@@ -317,6 +450,7 @@ function ColumnDropZone({
       ref={setNodeRef}
       className={cn(
         "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur transition-colors",
+        muted && "border-dashed bg-transparent/40 opacity-75",
         isOver && "bg-[color:var(--nook-sidebar-input-bg)]"
       )}
     >
@@ -386,6 +520,13 @@ export function RoomTaskBoard({
   const [draftAssigneeUserId, setDraftAssigneeUserId] = React.useState("none")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
   const [draftDueAt, setDraftDueAt] = React.useState("")
+  const [isAddTaskOpen, setIsAddTaskOpen] = React.useState(false)
+  const [isMemberProgressOpen, setIsMemberProgressOpen] = React.useState(false)
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [assigneeFilter, setAssigneeFilter] = React.useState<AssigneeFilter>("all")
+  const [priorityFilter, setPriorityFilter] = React.useState<PriorityFilter>("all")
+  const [dueFilter, setDueFilter] = React.useState<DueFilter>("all")
+  const [sortMode, setSortMode] = React.useState<SortMode>("manual")
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null)
   const [editTitle, setEditTitle] = React.useState("")
@@ -592,6 +733,7 @@ export function RoomTaskBoard({
     setDraftAssigneeUserId("none")
     setDraftPriority("medium")
     setDraftDueAt("")
+    setIsAddTaskOpen(false)
   }
 
   function openEdit(task: RoomTask) {
@@ -704,6 +846,75 @@ export function RoomTaskBoard({
 
   const canAddTask = draftTitle.trim().length > 0 && draftNote.trim().length > 0
   const boardTasks = React.useMemo(() => flattenBoard(board), [board])
+  const boardMetrics = React.useMemo(() => {
+    const now = Date.now()
+    const openTasks = boardTasks.filter((task) => task.status !== "completed")
+    return {
+      overdue: openTasks.filter((task) => task.dueAt && task.dueAt < now).length,
+      dueToday: openTasks.filter((task) => task.dueAt && isTaskDueToday(task.dueAt)).length,
+      blocked: openTasks.filter((task) => task.status === "blocked").length,
+      mineOpen: openTasks.filter((task) => user?.id && task.assigneeUserId === user.id).length,
+    }
+  }, [boardTasks, user?.id])
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 ||
+    assigneeFilter !== "all" ||
+    priorityFilter !== "all" ||
+    dueFilter !== "all" ||
+    sortMode !== "manual"
+  const activeFilterPills = React.useMemo(() => {
+    const pills: string[] = []
+    if (searchQuery.trim()) pills.push(`Search: ${searchQuery.trim()}`)
+    if (assigneeFilter !== "all") {
+      if (assigneeFilter === "mine") pills.push("Assignee: Mine")
+      else if (assigneeFilter === "none") pills.push("Assignee: Unassigned")
+      else pills.push(`Assignee: ${memberNameById.get(assigneeFilter) ?? "Custom"}`)
+    }
+    if (priorityFilter !== "all") pills.push(`Priority: ${priorityFilter}`)
+    if (dueFilter !== "all") pills.push(`Due: ${dueFilter}`)
+    if (sortMode !== "manual") pills.push(`Sort: ${sortMode.replace("_", " ")}`)
+    return pills
+  }, [
+    assigneeFilter,
+    dueFilter,
+    memberNameById,
+    priorityFilter,
+    searchQuery,
+    sortMode,
+  ])
+
+  const visibleBoard = React.useMemo(() => {
+    const filterOpts = {
+      search: searchQuery,
+      assignee: assigneeFilter,
+      priority: priorityFilter,
+      due: dueFilter,
+      userId: user?.id,
+    }
+    return {
+      todo: sortTasks(board.todo.filter((task) => taskMatchesFilters(task, filterOpts)), sortMode),
+      working: sortTasks(
+        board.working.filter((task) => taskMatchesFilters(task, filterOpts)),
+        sortMode
+      ),
+      blocked: sortTasks(
+        board.blocked.filter((task) => taskMatchesFilters(task, filterOpts)),
+        sortMode
+      ),
+      completed: sortTasks(
+        board.completed.filter((task) => taskMatchesFilters(task, filterOpts)),
+        sortMode
+      ),
+    } as TaskBoardState
+  }, [assigneeFilter, board, dueFilter, priorityFilter, searchQuery, sortMode, user?.id])
+
+  function clearFilters() {
+    setSearchQuery("")
+    setAssigneeFilter("all")
+    setPriorityFilter("all")
+    setDueFilter("all")
+    setSortMode("manual")
+  }
   const memberProgress = React.useMemo(() => {
     return members
       .map((member) => {
@@ -711,6 +922,7 @@ export function RoomTaskBoard({
         const total = assigned.length
         const completed = assigned.filter((task) => task.status === "completed").length
         const working = assigned.filter((task) => task.status === "working").length
+        const blocked = assigned.filter((task) => task.status === "blocked").length
         const todo = assigned.filter((task) => task.status === "todo").length
         const progress = total > 0 ? Math.round((completed / total) * 100) : 0
         return {
@@ -718,6 +930,7 @@ export function RoomTaskBoard({
           total,
           completed,
           working,
+          blocked,
           todo,
           progress,
         }
@@ -732,142 +945,273 @@ export function RoomTaskBoard({
   return (
     <div className="space-y-5">
       <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Add Room Task</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Input
-            value={draftTitle}
-            onChange={(event) => setDraftTitle(event.target.value)}
-            placeholder="Task title"
-            className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-          />
-          <textarea
-            value={draftNote}
-            onChange={(event) => setDraftNote(event.target.value)}
-            placeholder="What needs to be done?"
-            className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
-          />
-          <div className="grid gap-3 md:grid-cols-4">
-            <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
-              <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
-                <SelectValue placeholder="Assign to" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Unassigned</SelectItem>
-                {members.map((member) => (
-                  <SelectItem key={member.userId} value={member.userId}>
-                    {member.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={draftPriority}
-              onValueChange={(value) => setDraftPriority(value as TaskPriority)}
-            >
-              <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
-                <SelectValue placeholder="Priority" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              type="datetime-local"
-              value={draftDueAt}
-              onChange={(event) => setDraftDueAt(event.target.value)}
-              className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-            />
+        {!isAddTaskOpen ? (
+          <CardContent className="py-4">
             <Button
               type="button"
-              onClick={addTask}
-              disabled={!canAddTask}
-              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
+              onClick={() => setIsAddTaskOpen(true)}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
             >
               <Plus />
               Add Task
             </Button>
-          </div>
-        </CardContent>
+          </CardContent>
+        ) : (
+          <>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-lg">Add Room Task</CardTitle>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsAddTaskOpen(false)}
+                >
+                  Collapse
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Input
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                placeholder="Task title"
+                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+              />
+              <textarea
+                value={draftNote}
+                onChange={(event) => setDraftNote(event.target.value)}
+                placeholder="What needs to be done?"
+                className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
+              />
+              <div className="grid gap-3 md:grid-cols-4">
+                <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
+                  <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                    <SelectValue placeholder="Assign to" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unassigned</SelectItem>
+                    {members.map((member) => (
+                      <SelectItem key={member.userId} value={member.userId}>
+                        {member.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={draftPriority}
+                  onValueChange={(value) => setDraftPriority(value as TaskPriority)}
+                >
+                  <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                    <SelectValue placeholder="Priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="datetime-local"
+                  value={draftDueAt}
+                  onChange={(event) => setDraftDueAt(event.target.value)}
+                  className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+                />
+                <Button
+                  type="button"
+                  onClick={addTask}
+                  disabled={!canAddTask}
+                  className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
+                >
+                  <Plus />
+                  Add Task
+                </Button>
+              </div>
+            </CardContent>
+          </>
+        )}
       </Card>
 
       <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
         <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Member Progress</CardTitle>
+          <CardTitle className="text-lg">Task Manager View</CardTitle>
         </CardHeader>
-        <CardContent>
-          {memberProgress.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No room members found.</p>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              {memberProgress.map((item) => {
-                const initials = item.member.name
-                  .split(" ")
-                  .map((part) => part[0] ?? "")
-                  .join("")
-                  .slice(0, 2)
-                  .toUpperCase()
+        <CardContent className="space-y-3 pt-0">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-red-700 dark:text-red-300">
+              Overdue: {boardMetrics.overdue}
+            </span>
+            <span className="rounded-full border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-1 text-muted-foreground">
+              Due Today: {boardMetrics.dueToday}
+            </span>
+            <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-rose-700 dark:text-rose-300">
+              Blocked: {boardMetrics.blocked}
+            </span>
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1 text-cyan-700 dark:text-cyan-300">
+              My Open: {boardMetrics.mineOpen}
+            </span>
+          </div>
 
-                return (
-                  <article
-                    key={item.member.userId}
-                    className="rounded-xl border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3"
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="size-9 border border-cyan-500/30">
-                          <AvatarImage
-                            src={avatarSrcForKey(item.member.avatarKey)}
-                            alt={item.member.name}
-                          />
-                          <AvatarFallback>{initials}</AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="text-sm font-medium leading-tight">{item.member.name}</p>
-                          <p className="text-xs text-muted-foreground">{item.member.role}</p>
-                        </div>
-                      </div>
-                      <Badge variant="secondary">{item.total} tasks</Badge>
-                    </div>
-
-                    <div className="mb-2 h-2 overflow-hidden rounded-full bg-slate-300/40 dark:bg-slate-700/60">
-                      <div
-                        className={cn(
-                          "h-full rounded-full bg-cyan-500 transition-all",
-                          item.progress === 100 && "bg-emerald-500"
-                        )}
-                        style={{ width: `${item.progress}%` }}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-4 gap-2 text-xs">
-                      <span className="text-muted-foreground">Done: {item.completed}</span>
-                      <span className="text-muted-foreground">Doing: {item.working}</span>
-                      <span className="text-muted-foreground">Todo: {item.todo}</span>
-                      <span className="text-right font-medium">{item.progress}%</span>
-                    </div>
-                  </article>
-                )
-              })}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search title, note, assignee..."
+                className="pl-9"
+              />
             </div>
-          )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <SlidersHorizontal className="size-4" />
+                  Filters
+                  {activeFilterPills.length > 0 ? (
+                    <Badge
+                      variant="secondary"
+                      className="ml-1 rounded-full px-1.5 py-0 text-[10px]"
+                    >
+                      {activeFilterPills.length}
+                    </Badge>
+                  ) : null}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>Assignee</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => setAssigneeFilter("all")}>
+                  {assigneeFilter === "all" ? "• " : ""}
+                  All assignees
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setAssigneeFilter("mine")}>
+                  {assigneeFilter === "mine" ? "• " : ""}
+                  My tasks
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setAssigneeFilter("none")}>
+                  {assigneeFilter === "none" ? "• " : ""}
+                  Unassigned
+                </DropdownMenuItem>
+                {members.map((member) => (
+                  <DropdownMenuItem
+                    key={member.userId}
+                    onSelect={() => setAssigneeFilter(member.userId)}
+                  >
+                    {assigneeFilter === member.userId ? "• " : ""}
+                    {member.name}
+                  </DropdownMenuItem>
+                ))}
+
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Priority</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => setPriorityFilter("all")}>
+                  {priorityFilter === "all" ? "• " : ""}
+                  All priorities
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setPriorityFilter("high")}>
+                  {priorityFilter === "high" ? "• " : ""}
+                  High
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setPriorityFilter("medium")}>
+                  {priorityFilter === "medium" ? "• " : ""}
+                  Medium
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setPriorityFilter("low")}>
+                  {priorityFilter === "low" ? "• " : ""}
+                  Low
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Due Date</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => setDueFilter("all")}>
+                  {dueFilter === "all" ? "• " : ""}
+                  Any due date
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDueFilter("overdue")}>
+                  {dueFilter === "overdue" ? "• " : ""}
+                  Overdue
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDueFilter("today")}>
+                  {dueFilter === "today" ? "• " : ""}
+                  Due today
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDueFilter("week")}>
+                  {dueFilter === "week" ? "• " : ""}
+                  Due this week
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setDueFilter("none")}>
+                  {dueFilter === "none" ? "• " : ""}
+                  No due date
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Sort</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => setSortMode("manual")}>
+                  {sortMode === "manual" ? "• " : ""}
+                  Manual board order
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setSortMode("priority")}>
+                  {sortMode === "priority" ? "• " : ""}
+                  Priority first
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setSortMode("due_soon")}>
+                  {sortMode === "due_soon" ? "• " : ""}
+                  Due soon first
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={clearFilters}>Reset all filters</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="size-8">
+                    <Info className="size-4 text-muted-foreground" />
+                    <span className="sr-only">Ordering info</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent sideOffset={6}>
+                  {hasActiveFilters
+                    ? "Filtered view: drag-and-drop is disabled."
+                    : "Manual mode: drag-and-drop is enabled."}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            {hasActiveFilters ? (
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                Clear
+              </Button>
+            ) : null}
+          </div>
+          {activeFilterPills.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {activeFilterPills.map((pill) => (
+                <Badge
+                  key={pill}
+                  variant="secondary"
+                  className="rounded-full border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-2 py-0.5 text-[11px] font-normal"
+                >
+                  {pill}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={onDragStart}
-        onDragEnd={onDragEnd}
-      >
-        <div className="grid gap-4 lg:grid-cols-3">
+      {hasActiveFilters ? (
+        <div className="grid gap-4 lg:grid-cols-4">
           {boardColumns.map((column) => {
-            const items = board[column.id]
+            const items = visibleBoard[column.id]
             return (
-              <ColumnDropZone key={column.id} id={column.id}>
+              <section
+                key={column.id}
+                className={cn(
+                  "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur",
+                  items.length === 0 && "border-dashed bg-transparent/35 opacity-75"
+                )}
+              >
                 <div className="mb-3 flex items-start justify-between">
                   <div>
                     <h3 className="text-base font-semibold">{column.label}</h3>
@@ -875,76 +1219,204 @@ export function RoomTaskBoard({
                   </div>
                   <Badge variant="secondary">{items.length}</Badge>
                 </div>
-                <SortableContext
-                  items={items.map((task) => task.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="space-y-3">
-                    {items.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-6 text-center text-sm text-muted-foreground">
-                        No tasks yet
-                      </p>
-                    ) : null}
-                    {items.map((task) => (
-                      <TaskCard
-                        key={task.id}
-                        task={task}
-                        assigneeAvatarKey={
-                          task.assigneeUserId
-                            ? memberAvatarById.get(task.assigneeUserId)
-                            : undefined
-                        }
-                        onEdit={openEdit}
-                        onStartFocus={onStartFocusTask}
-                        onDiscuss={(selectedTask) => {
-                          setThreadTaskId(selectedTask.id)
-                          setThreadError(null)
-                        }}
-                      />
-                    ))}
-                  </div>
-                </SortableContext>
-              </ColumnDropZone>
+                <div className="space-y-3">
+                  {items.length === 0 ? (
+                    <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
+                      No matching tasks
+                    </p>
+                  ) : null}
+                  {items.map((task) => (
+                    <BaseTaskCard
+                      key={task.id}
+                      task={task}
+                      assigneeAvatarKey={
+                        task.assigneeUserId
+                          ? memberAvatarById.get(task.assigneeUserId)
+                          : undefined
+                      }
+                      onEdit={openEdit}
+                      onStartFocus={onStartFocusTask}
+                      onDiscuss={(selectedTask) => {
+                        setThreadTaskId(selectedTask.id)
+                        setThreadError(null)
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
             )
           })}
         </div>
-        <DragOverlay>
-          {activeTask ? (
-            <article className="w-[280px] rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/95 p-3 shadow-xl">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <h4 className="text-sm font-medium">{activeTask.title}</h4>
-                <Badge className={cn("capitalize", priorityClass(activeTask.priority))}>
-                  {activeTask.priority}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">{activeTask.note}</p>
-              {activeTask.assigneeUserId && activeTask.assignee ? (
-                <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
-                  <Avatar className="size-5 border border-cyan-500/25">
-                    <AvatarImage
-                      src={avatarSrcForKey(
-                        memberAvatarById.get(activeTask.assigneeUserId)
-                      )}
-                      alt={activeTask.assignee}
-                    />
-                    <AvatarFallback>
-                      {activeTask.assignee
-                        .split(" ")
-                        .map((part) => part[0] ?? "")
-                        .join("")
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  Assigned: {activeTask.assignee}
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+        >
+          <div className="grid gap-4 lg:grid-cols-4">
+            {boardColumns.map((column) => {
+              const items = board[column.id]
+              return (
+                <ColumnDropZone key={column.id} id={column.id} muted={items.length === 0}>
+                  <div className="mb-3 flex items-start justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold">{column.label}</h3>
+                      <p className="text-xs text-muted-foreground">{column.subtitle}</p>
+                    </div>
+                    <Badge variant="secondary">{items.length}</Badge>
+                  </div>
+                  <SortableContext
+                    items={items.map((task) => task.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-3">
+                      {items.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
+                          No tasks yet
+                        </p>
+                      ) : null}
+                      {items.map((task) => (
+                        <SortableTaskCard
+                          key={task.id}
+                          task={task}
+                          assigneeAvatarKey={
+                            task.assigneeUserId
+                              ? memberAvatarById.get(task.assigneeUserId)
+                              : undefined
+                          }
+                          onEdit={openEdit}
+                          onStartFocus={onStartFocusTask}
+                          onDiscuss={(selectedTask) => {
+                            setThreadTaskId(selectedTask.id)
+                            setThreadError(null)
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </ColumnDropZone>
+              )
+            })}
+          </div>
+          <DragOverlay>
+            {activeTask ? (
+              <article className="w-[280px] rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/95 p-3 shadow-xl">
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <h4 className="text-sm font-medium">{activeTask.title}</h4>
+                  <Badge className={cn("capitalize", priorityClass(activeTask.priority))}>
+                    {activeTask.priority}
+                  </Badge>
                 </div>
+                <p className="text-xs text-muted-foreground">{activeTask.note}</p>
+                {activeTask.assigneeUserId && activeTask.assignee ? (
+                  <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
+                    <Avatar className="size-5 border border-cyan-500/25">
+                      <AvatarImage
+                        src={avatarSrcForKey(
+                          memberAvatarById.get(activeTask.assigneeUserId)
+                        )}
+                        alt={activeTask.assignee}
+                      />
+                      <AvatarFallback>
+                        {activeTask.assignee
+                          .split(" ")
+                          .map((part) => part[0] ?? "")
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    Assigned: {activeTask.assignee}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">Assigned: Unassigned</p>
+                )}
+              </article>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      )}
+
+      <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
+        <CardHeader className="pb-3">
+          <button
+            type="button"
+            onClick={() => setIsMemberProgressOpen((prev) => !prev)}
+            className="flex w-full items-center justify-between text-left"
+          >
+            <CardTitle className="text-lg">Member Progress</CardTitle>
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              {isMemberProgressOpen ? "Collapse" : "Expand"}
+              {isMemberProgressOpen ? (
+                <ChevronUp className="size-4" />
               ) : (
-                <p className="mt-2 text-xs text-muted-foreground">Assigned: Unassigned</p>
+                <ChevronDown className="size-4" />
               )}
-            </article>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+            </span>
+          </button>
+        </CardHeader>
+        {isMemberProgressOpen ? (
+          <CardContent>
+            {memberProgress.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No room members found.</p>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {memberProgress.map((item) => {
+                  const initials = item.member.name
+                    .split(" ")
+                    .map((part) => part[0] ?? "")
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()
+
+                  return (
+                    <article
+                      key={item.member.userId}
+                      className="rounded-xl border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="size-9 border border-cyan-500/30">
+                            <AvatarImage
+                              src={avatarSrcForKey(item.member.avatarKey)}
+                              alt={item.member.name}
+                            />
+                            <AvatarFallback>{initials}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm font-medium leading-tight">{item.member.name}</p>
+                            <p className="text-xs text-muted-foreground">{item.member.role}</p>
+                          </div>
+                        </div>
+                        <Badge variant="secondary">{item.total} tasks</Badge>
+                      </div>
+
+                      <div className="mb-2 h-2 overflow-hidden rounded-full bg-slate-300/40 dark:bg-slate-700/60">
+                        <div
+                          className={cn(
+                            "h-full rounded-full bg-cyan-500 transition-all",
+                            item.progress === 100 && "bg-emerald-500"
+                          )}
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-5 gap-2 text-xs">
+                        <span className="text-muted-foreground">Done: {item.completed}</span>
+                        <span className="text-muted-foreground">Doing: {item.working}</span>
+                        <span className="text-muted-foreground">Blocked: {item.blocked}</span>
+                        <span className="text-muted-foreground">Todo: {item.todo}</span>
+                        <span className="text-right font-medium">{item.progress}%</span>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        ) : null}
+      </Card>
 
       <Drawer
         open={Boolean(editingTask)}
@@ -1001,6 +1473,7 @@ export function RoomTaskBoard({
                 <SelectContent>
                   <SelectItem value="todo">To Do</SelectItem>
                   <SelectItem value="working">In Progress</SelectItem>
+                  <SelectItem value="blocked">Blocked</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                 </SelectContent>
               </Select>

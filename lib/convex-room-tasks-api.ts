@@ -22,7 +22,7 @@ type RoomTasksApiShape = {
         assignee: string
         assigneeUserId?: Id<"users">
         priority: "low" | "medium" | "high"
-        status: "todo" | "working" | "completed"
+        status: "todo" | "working" | "blocked" | "completed"
         dueAt?: number
         order: number
       }>

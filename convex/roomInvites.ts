@@ -187,8 +187,20 @@ export const accept = mutation({
       )
       .first()
 
-    if (!invite || invite.status !== "pending") {
-      throw new Error("Invite is invalid.")
+    if (!invite) {
+      throw new Error("Invite not found. Please use the latest invite link.")
+    }
+    if (invite.status === "accepted") {
+      throw new Error("Invite has already been accepted.")
+    }
+    if (invite.status === "revoked") {
+      throw new Error("Invite was revoked by the room admin.")
+    }
+    if (invite.status === "expired") {
+      throw new Error("Invite has expired.")
+    }
+    if (invite.status !== "pending") {
+      throw new Error("Invite is not pending.")
     }
     if (invite.expiresAt <= Date.now()) {
       await ctx.db.patch(invite._id, { status: "expired" })

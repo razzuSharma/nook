@@ -28,6 +28,7 @@ export const syncByRoom = mutation({
         status: v.union(
           v.literal("todo"),
           v.literal("working"),
+          v.literal("blocked"),
           v.literal("completed")
         ),
         dueAt: v.optional(v.number()),
