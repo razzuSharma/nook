@@ -2,6 +2,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import type { ActivityItem } from "@/components/recent-activity/data"
 
 export function ActivityFeed({ items }: { items: ActivityItem[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 text-sm text-muted-foreground backdrop-blur">
+        No recent activity yet.
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-2 backdrop-blur">
       <ul className="divide-y divide-cyan-500/15">

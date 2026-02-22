@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useMutation, useQuery } from "convex/react"
+import { useQuery } from "convex/react"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import type { Id } from "@/convex/_generated/dataModel"
@@ -34,17 +34,12 @@ export default function RoomTasksPage() {
     roomsApi.joinedRoomIdsByUser,
     user ? { userId: user.id } : "skip"
   ) ?? []) as Id<"rooms">[]
-  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
     [roomId, rooms]
   )
   const isJoined = room ? joinedRoomIds.includes(room._id) : false
-
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
 
   const startFocusFromTask = React.useCallback(
     (task: RoomTaskFocusTarget) => {

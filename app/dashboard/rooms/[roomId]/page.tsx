@@ -69,7 +69,6 @@ export default function RoomPage() {
     roomsApi.joinedRoomIdsByUser,
     user ? { userId: user.id } : "skip"
   ) ?? []) as Id<"rooms">[]
-  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
   const createInvite = useMutation(roomInvitesApi.create)
   const revokeInvite = useMutation(roomInvitesApi.revoke)
   const [inviteEmail, setInviteEmail] = React.useState("")
@@ -104,10 +103,6 @@ export default function RoomPage() {
     email: string
     avatarKey: string
   }>
-
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
 
   React.useEffect(() => {
     function onOpenRoomInvite() {

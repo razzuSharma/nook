@@ -3,42 +3,15 @@ import type { Id } from "./_generated/dataModel"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { v } from "convex/values"
 
-const defaultRooms = [
-  {
-    name: "React Wizards",
-    description: "Frontend architecture and component optimization.",
-    mode: "CAFE MODE",
-    access: "public" as const,
-    membersCount: 6,
-    membersMax: 12,
-    joinCode: "RW-2026",
-    icon: "code" as const,
-  },
-  {
-    name: "SaaS Builders",
-    description: "Collaborating on the next generation of SaaS tools.",
-    mode: "BUILD SPRINT",
-    access: "public" as const,
-    membersCount: 2,
-    membersMax: 8,
-    joinCode: "SB-2026",
-    icon: "rocket" as const,
-  },
-  {
-    name: "Rust Study Group",
-    description: "Learning memory safety and performance together.",
-    mode: "SESSION ACTIVE",
-    access: "public" as const,
-    membersCount: 3,
-    membersMax: 5,
-    joinCode: "RS-2026",
-    icon: "cpu" as const,
-  },
-]
-
 function generateJoinCode() {
   return `NOOK-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 }
+
+const LEGACY_SEEDED_ROOM_KEYS = new Set([
+  "React Wizards::RW-2026",
+  "SaaS Builders::SB-2026",
+  "Rust Study Group::RS-2026",
+])
 
 function toHex(bytes: Uint8Array) {
   return Array.from(bytes)
@@ -150,32 +123,45 @@ export const ensureDefaults = mutation({
   args: {},
   handler: async (ctx) => {
     const existingRooms = await ctx.db.query("rooms").collect()
-    if (existingRooms.length > 0) {
-      for (const room of existingRooms) {
-        const patch: {
-          joinCode?: string
-          access?: "public"
-        } = {}
-        if (!room.access) {
-          patch.access = "public"
-        }
-        if (!room.joinCode && (room.access ?? "public") === "public") {
-          patch.joinCode = generateJoinCode()
-        }
-        if (Object.keys(patch).length > 0) {
-          await ctx.db.patch(room._id, patch)
-        }
+    for (const room of existingRooms) {
+      const patch: {
+        joinCode?: string
+        access?: "public"
+      } = {}
+      if (!room.access) {
+        patch.access = "public"
       }
-      return
+      if (!room.joinCode && (room.access ?? "public") === "public") {
+        patch.joinCode = generateJoinCode()
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(room._id, patch)
+      }
+    }
+  },
+})
+
+export const cleanupSeeded = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const rooms = await ctx.db.query("rooms").collect()
+    let deletedRooms = 0
+
+    for (const room of rooms) {
+      const key = `${room.name}::${room.joinCode ?? ""}`
+      if (!LEGACY_SEEDED_ROOM_KEYS.has(key)) continue
+
+      const members = await ctx.db
+        .query("roomMembers")
+        .withIndex("by_room", (query) => query.eq("roomId", room._id))
+        .collect()
+
+      if (members.length > 0) continue
+      await ctx.db.delete(room._id)
+      deletedRooms += 1
     }
 
-    for (const room of defaultRooms) {
-      await ctx.db.insert("rooms", {
-        ...room,
-        joinCode: room.joinCode,
-        createdAt: Date.now(),
-      })
-    }
+    return { deletedRooms }
   },
 })
 

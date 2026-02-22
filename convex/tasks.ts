@@ -2,50 +2,6 @@ import { mutation, query } from "./_generated/server"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { v } from "convex/values"
 
-const defaultTasks = [
-  {
-    taskId: "t-1",
-    title: "Finalize onboarding copy",
-    note: "Update welcome messaging and CTA labels.",
-    dueDate: "2026-02-15",
-    dueTime: "10:00",
-    priority: "high" as const,
-    status: "todo" as const,
-    order: 0,
-  },
-  {
-    taskId: "t-2",
-    title: "Prepare sprint board",
-    note: "Create initial cards for Q1 delivery scope.",
-    dueDate: "2026-02-16",
-    dueTime: "13:30",
-    priority: "medium" as const,
-    status: "todo" as const,
-    order: 1,
-  },
-  {
-    taskId: "t-3",
-    title: "Refine dashboard metrics",
-    note: "Align data labels and card emphasis.",
-    dueDate: "2026-02-15",
-    dueTime: "15:00",
-    priority: "medium" as const,
-    status: "working" as const,
-    order: 2,
-  },
-  {
-    taskId: "t-4",
-    title: "Theme token cleanup",
-    note: "Consolidate Nook tokens in globals.",
-    dueDate: "2026-02-14",
-    dueTime: "17:45",
-    priority: "low" as const,
-    status: "completed" as const,
-    order: 3,
-    completedAt: new Date("2026-02-14T17:45:00.000Z").getTime(),
-  },
-]
-
 function toHex(bytes: Uint8Array) {
   return Array.from(bytes)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -82,6 +38,8 @@ async function requireUserId(
   return user._id
 }
 
+const LEGACY_SEEDED_TASK_IDS = new Set(["t-1", "t-2", "t-3", "t-4"])
+
 export const list = query({
   args: {
     sessionToken: v.string(),
@@ -100,25 +58,23 @@ export const ensureDefaults = mutation({
     sessionToken: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireUserId(ctx, args.sessionToken)
-    const existing = await ctx.db
-      .query("tasks")
-      .withIndex("by_user_order", (indexQuery) => indexQuery.eq("userId", userId))
-      .first()
-    if (existing) {
-      return
+    await requireUserId(ctx, args.sessionToken)
+  },
+})
+
+export const cleanupSeeded = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const tasks = await ctx.db.query("tasks").collect()
+
+    let deletedTasks = 0
+    for (const task of tasks) {
+      if (!LEGACY_SEEDED_TASK_IDS.has(task.taskId)) continue
+      await ctx.db.delete(task._id)
+      deletedTasks += 1
     }
 
-    for (const task of defaultTasks) {
-      const now = Date.now()
-      await ctx.db.insert("tasks", {
-        ...task,
-        userId,
-        completedAt: task.status === "completed" ? task.completedAt ?? now : undefined,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
+    return { deletedTasks }
   },
 })
 

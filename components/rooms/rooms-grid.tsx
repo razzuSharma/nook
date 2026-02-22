@@ -81,7 +81,6 @@ export function RoomsGrid() {
     roomsApi.pinnedRoomIdsByUser,
     userId ? { userId } : "skip"
   ) ?? []) as Id<"rooms">[]
-  const ensureDefaults = useMutation(roomsApi.ensureDefaults)
   const createRoomInDb = useMutation(roomsApi.create)
   const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
   const joinByCodeInDb = useMutation(roomsApi.joinByCode)
@@ -107,10 +106,6 @@ export function RoomsGrid() {
     window.addEventListener("nook:create-room", openDrawer)
     return () => window.removeEventListener("nook:create-room", openDrawer)
   }, [])
-
-  React.useEffect(() => {
-    void ensureDefaults({})
-  }, [ensureDefaults])
 
   function resetForm() {
     setName("")

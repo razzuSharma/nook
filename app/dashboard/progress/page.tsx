@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useMutation, useQuery } from "convex/react"
+import { useQuery } from "convex/react"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
@@ -104,14 +104,6 @@ export default function ProgressPage() {
     tasksApi.list,
     sessionToken ? { sessionToken } : "skip"
   ) as TaskItem[] | undefined
-  const ensureFocusDefaults = useMutation(focusSessionsApi.ensureDefaults)
-  const ensureTaskDefaults = useMutation(tasksApi.ensureDefaults)
-
-  React.useEffect(() => {
-    if (!sessionToken) return
-    void ensureFocusDefaults({ sessionToken })
-    void ensureTaskDefaults({ sessionToken })
-  }, [ensureFocusDefaults, ensureTaskDefaults, sessionToken])
 
   const summary = React.useMemo(() => {
     const sessions = focusDocs ?? []
