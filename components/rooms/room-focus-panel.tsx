@@ -7,12 +7,15 @@ import { useAuth } from "@/components/providers/auth-provider"
 import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { avatarSrcForKey } from "@/lib/avatar-options"
 
 type PresenceItem = {
   id: string
   userId: string
   userName: string
   userEmail: string
+  userAvatarKey: string
   intention: string
   endsAt: number | null
 }
@@ -60,10 +63,26 @@ export function RoomFocusPanel({ roomId }: { roomId: Id<"rooms"> }) {
                 className="rounded-md border border-cyan-500/15 bg-cyan-500/5 px-3 py-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">
-                    {item.userName}
-                    {user?.id === item.userId ? " (You)" : ""}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <Avatar className="size-8 border border-cyan-500/30">
+                      <AvatarImage
+                        src={avatarSrcForKey(item.userAvatarKey)}
+                        alt={item.userName}
+                      />
+                      <AvatarFallback>
+                        {item.userName
+                          .split(" ")
+                          .map((part) => part[0] ?? "")
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <p className="text-sm font-medium">
+                      {item.userName}
+                      {user?.id === item.userId ? " (You)" : ""}
+                    </p>
+                  </div>
                   <Badge variant="secondary">
                     {formatRemaining(item.endsAt, now)}
                   </Badge>

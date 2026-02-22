@@ -13,6 +13,7 @@ import type * as email from "../email.js";
 import type * as focusSessions from "../focusSessions.js";
 import type * as roomFocus from "../roomFocus.js";
 import type * as roomInvites from "../roomInvites.js";
+import type * as roomTaskChat from "../roomTaskChat.js";
 import type * as roomTasks from "../roomTasks.js";
 import type * as rooms from "../rooms.js";
 import type * as tasks from "../tasks.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   focusSessions: typeof focusSessions;
   roomFocus: typeof roomFocus;
   roomInvites: typeof roomInvites;
+  roomTaskChat: typeof roomTaskChat;
   roomTasks: typeof roomTasks;
   rooms: typeof rooms;
   tasks: typeof tasks;

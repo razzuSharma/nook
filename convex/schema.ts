@@ -81,12 +81,44 @@ export default defineSchema({
       v.literal("completed")
     ),
     order: v.number(),
+    dueAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
   })
     .index("by_room_order", ["roomId", "order"])
     .index("by_room_taskId", ["roomId", "taskId"]),
+  roomTaskEvents: defineTable({
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    actorUserId: v.string(),
+    type: v.string(),
+    message: v.string(),
+    createdAt: v.number(),
+  }).index("by_room_task_createdAt", ["roomId", "taskId", "createdAt"]),
+  roomTaskMessages: defineTable({
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    authorUserId: v.string(),
+    body: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_room_task_createdAt", ["roomId", "taskId", "createdAt"])
+    .index("by_task_createdAt", ["taskId", "createdAt"]),
+  roomTaskFiles: defineTable({
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    uploadedByUserId: v.string(),
+    name: v.string(),
+    url: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_room_task_createdAt", ["roomId", "taskId", "createdAt"])
+    .index("by_task_createdAt", ["taskId", "createdAt"]),
   roomInvites: defineTable({
     roomId: v.id("rooms"),
     email: v.string(),

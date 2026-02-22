@@ -14,6 +14,7 @@ type RoomTasksApiShape = {
     "public",
     {
       roomId: Id<"rooms">
+      actorUserId?: string
       tasks: Array<{
         taskId: string
         title: string
@@ -22,6 +23,7 @@ type RoomTasksApiShape = {
         assigneeUserId?: Id<"users">
         priority: "low" | "medium" | "high"
         status: "todo" | "working" | "completed"
+        dueAt?: number
         order: number
       }>
     },

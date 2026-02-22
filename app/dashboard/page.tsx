@@ -1,9 +1,12 @@
+"use client"
+
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { ActivityFeed } from "@/components/recent-activity/activity-feed"
 import { recentActivityItems } from "@/components/recent-activity/data"
 import { RoomsGrid } from "@/components/rooms/rooms-grid"
 import { SiteHeader } from "@/components/site-header"
+import { useAuth } from "@/components/providers/auth-provider"
 import {
   SidebarInset,
   SidebarProvider,
@@ -16,6 +19,8 @@ const metrics = [
 ]
 
 export default function Page() {
+  const { user } = useAuth()
+  const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there"
   return (
     <SidebarProvider
       style={
@@ -32,7 +37,7 @@ export default function Page() {
           <div className="mx-auto w-full max-w-6xl">
             <div className="mb-6">
               <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-                Good afternoon, Alex.
+                Good afternoon, {firstName}.
               </h1>
               <p className="mt-2 text-muted-foreground">
                 Ready for focused collaboration? You have 3 rooms active today.
