@@ -48,9 +48,16 @@ type RoomsApiShape = {
       name: string
       description: string
       mode: string
+      access: "public" | "private" | "invite_only"
       membersMax: number
       userId: string
     },
+    unknown
+  >
+  listMembersByRoom: FunctionReference<
+    "query",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms"> },
     unknown
   >
 }

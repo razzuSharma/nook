@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
-import type { MutationCtx } from "./_generated/server"
+import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { v } from "convex/values"
 
 const defaultRooms = [
@@ -8,6 +8,7 @@ const defaultRooms = [
     name: "React Wizards",
     description: "Frontend architecture and component optimization.",
     mode: "CAFE MODE",
+    access: "public" as const,
     membersCount: 6,
     membersMax: 12,
     joinCode: "RW-2026",
@@ -17,6 +18,7 @@ const defaultRooms = [
     name: "SaaS Builders",
     description: "Collaborating on the next generation of SaaS tools.",
     mode: "BUILD SPRINT",
+    access: "public" as const,
     membersCount: 2,
     membersMax: 8,
     joinCode: "SB-2026",
@@ -26,6 +28,7 @@ const defaultRooms = [
     name: "Rust Study Group",
     description: "Learning memory safety and performance together.",
     mode: "SESSION ACTIVE",
+    access: "public" as const,
     membersCount: 3,
     membersMax: 5,
     joinCode: "RS-2026",
@@ -35,6 +38,42 @@ const defaultRooms = [
 
 function generateJoinCode() {
   return `NOOK-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+}
+
+function toHex(bytes: Uint8Array) {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+async function sha256(value: string) {
+  const data = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest("SHA-256", data)
+  return toHex(new Uint8Array(digest))
+}
+
+async function requireUserBySession(
+  ctx: QueryCtx | MutationCtx,
+  sessionToken: string
+) {
+  const tokenHash = await sha256(sessionToken)
+  const session = await ctx.db
+    .query("authSessions")
+    .withIndex("by_tokenHash", (indexQuery) =>
+      indexQuery.eq("tokenHash", tokenHash)
+    )
+    .first()
+
+  if (!session || session.expiresAt <= Date.now()) {
+    throw new Error("Unauthorized.")
+  }
+
+  const user = await ctx.db.get(session.userId)
+  if (!user) {
+    throw new Error("Unauthorized.")
+  }
+
+  return user
 }
 
 async function joinRoom(
@@ -56,6 +95,14 @@ async function joinRoom(
 
   if (existing?.status === "active") {
     return { joined: true, roomId: room._id }
+  }
+
+  const roomAccess = room.access ?? "public"
+  if (roomAccess !== "public" && !existing) {
+    if (roomAccess === "invite_only") {
+      throw new Error("This room is invite-only. Ask a member for an invite link.")
+    }
+    throw new Error("This room is private.")
   }
 
   const currentActiveMembers = await ctx.db
@@ -105,10 +152,19 @@ export const ensureDefaults = mutation({
     const existingRooms = await ctx.db.query("rooms").collect()
     if (existingRooms.length > 0) {
       for (const room of existingRooms) {
-        if (room.joinCode) continue
-        await ctx.db.patch(room._id, {
-          joinCode: generateJoinCode(),
-        })
+        const patch: {
+          joinCode?: string
+          access?: "public"
+        } = {}
+        if (!room.access) {
+          patch.access = "public"
+        }
+        if (!room.joinCode && (room.access ?? "public") === "public") {
+          patch.joinCode = generateJoinCode()
+        }
+        if (Object.keys(patch).length > 0) {
+          await ctx.db.patch(room._id, patch)
+        }
       }
       return
     }
@@ -128,6 +184,7 @@ export const create = mutation({
     name: v.string(),
     description: v.string(),
     mode: v.string(),
+    access: v.union(v.literal("public"), v.literal("private"), v.literal("invite_only")),
     membersMax: v.number(),
     userId: v.string(),
   },
@@ -139,9 +196,10 @@ export const create = mutation({
       name: args.name.trim(),
       description: args.description.trim(),
       mode: args.mode.trim().toUpperCase(),
+      access: args.access,
       membersCount: 1,
       membersMax: safeMax,
-      joinCode: generateJoinCode(),
+      joinCode: args.access === "public" ? generateJoinCode() : undefined,
       icon: "sparkles",
       createdAt: now,
     })
@@ -243,6 +301,9 @@ export const joinByCode = mutation({
     if (!room) {
       throw new Error("Invalid room code.")
     }
+    if ((room.access ?? "public") !== "public") {
+      throw new Error("This room does not support join by code.")
+    }
 
     return await joinRoom(ctx, room._id, args.userId)
   },
@@ -287,5 +348,53 @@ export const leaveRoom = mutation({
     })
 
     return { left: true }
+  },
+})
+
+export const listMembersByRoom = query({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+
+    const currentMembership = await ctx.db
+      .query("roomMembers")
+      .withIndex("by_room_user", (indexQuery) =>
+        indexQuery.eq("roomId", args.roomId).eq("userId", user._id as string)
+      )
+      .first()
+
+    if (!currentMembership || currentMembership.status !== "active") {
+      throw new Error("Only joined members can view room members.")
+    }
+
+    const memberships = await ctx.db
+      .query("roomMembers")
+      .withIndex("by_room", (indexQuery) => indexQuery.eq("roomId", args.roomId))
+      .collect()
+
+    const activeMemberships = memberships.filter(
+      (membership) => membership.status === "active"
+    )
+
+    const members = await Promise.all(
+      activeMemberships.map(async (membership) => {
+        const normalizedUserId = ctx.db.normalizeId("users", membership.userId)
+        const memberUser = normalizedUserId
+          ? await ctx.db.get(normalizedUserId)
+          : null
+        return {
+          userId: membership.userId,
+          role: membership.role,
+          name: memberUser?.name ?? "Unknown User",
+          email: memberUser?.email ?? "",
+          avatarKey: memberUser?.avatarKey ?? "avatar-1",
+        }
+      })
+    )
+
+    return members
   },
 })

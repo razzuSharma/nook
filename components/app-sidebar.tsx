@@ -16,6 +16,7 @@ import {
 import { defaultRooms } from "@/components/rooms/types"
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { avatarSrcForKey } from "@/lib/avatar-options"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/providers/auth-provider"
 import {
@@ -66,6 +67,11 @@ const data = {
       url: "/dashboard/progress",
       icon: BarChart3,
     },
+    {
+      title: "Profile",
+      url: "/dashboard/profile",
+      icon: Users,
+    },
   ],
   modes: [
     {
@@ -91,6 +97,7 @@ const data = {
 type RoomListItem = {
   _id: Id<"rooms">
   name: string
+  access?: "public" | "private" | "invite_only"
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -158,7 +165,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navUser = {
     name: user?.name ?? "Nook User",
     email: user?.email ?? "Signed out",
-    avatar: "",
+    avatar: avatarSrcForKey(user?.avatarKey),
+    avatarKey: user?.avatarKey ?? "avatar-1",
   }
 
   const isNavItemActive = (title: string, url: string) => {
@@ -177,6 +185,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
     if (title === "Progress") {
       return pathname === "/dashboard/progress"
+    }
+    if (title === "Profile") {
+      return pathname === "/dashboard/profile"
     }
     return pathname === routePath
   }
@@ -358,7 +369,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             Leave
                           </Button>
                         </>
-                      ) : (
+                      ) : (room.access ?? "public") === "public" ? (
                         <Button
                           size="sm"
                           className="h-7 bg-cyan-500 px-2 text-[11px] text-slate-950 hover:bg-cyan-400"
@@ -371,6 +382,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         >
                           Join
                         </Button>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">
+                          {(room.access ?? "public") === "invite_only"
+                            ? "Invite only"
+                            : "Private"}
+                        </span>
                       )}
                     </div>
                   </div>

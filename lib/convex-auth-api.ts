@@ -10,13 +10,14 @@ type AuthApiShape = {
       id: string
       name: string
       email: string
+      avatarKey: string
       emailVerified: boolean
     } | null
   >
   signUp: FunctionReference<
     "mutation",
     "public",
-    { name: string; email: string; password: string; siteUrl: string },
+    { name: string; email: string; password: string; avatarKey: string; siteUrl: string },
     {
       requiresEmailVerification: boolean
       verificationLink: string
@@ -38,6 +39,7 @@ type AuthApiShape = {
         id: string
         name: string
         email: string
+        avatarKey: string
         emailVerified: boolean
       }
     }
@@ -52,8 +54,21 @@ type AuthApiShape = {
         id: string
         name: string
         email: string
+        avatarKey: string
         emailVerified: boolean
       }
+    }
+  >
+  updateProfile: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string; name: string; avatarKey: string },
+    {
+      id: string
+      name: string
+      email: string
+      avatarKey: string
+      emailVerified: boolean
     }
   >
   signOut: FunctionReference<

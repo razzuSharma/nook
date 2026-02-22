@@ -5,6 +5,43 @@ import { internal } from "./_generated/api"
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24
+const AVATAR_KEYS = [
+  "avatar-1",
+  "avatar-2",
+  "avatar-3",
+  "avatar-4",
+  "avatar-5",
+  "avatar-6",
+  "avatar-7",
+  "avatar-8",
+  "avatar-9",
+  "avatar-10",
+  "avatar-11",
+  "avatar-12",
+  "avatar-13",
+  "avatar-14",
+  "avatar-15",
+  "avatar-16",
+] as const
+const DEFAULT_AVATAR_KEY = "avatar-1"
+const LEGACY_AVATAR_KEYS = new Set([
+  "aurora",
+  "atlas",
+  "blaze",
+  "cinder",
+  "dune",
+  "ember",
+])
+
+function normalizeAvatarKey(avatarKey: string | undefined) {
+  if (avatarKey && AVATAR_KEYS.includes(avatarKey as (typeof AVATAR_KEYS)[number])) {
+    return avatarKey as (typeof AVATAR_KEYS)[number]
+  }
+  if (avatarKey && LEGACY_AVATAR_KEYS.has(avatarKey)) {
+    return DEFAULT_AVATAR_KEY
+  }
+  return DEFAULT_AVATAR_KEY
+}
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase()
@@ -74,6 +111,25 @@ async function createVerificationToken(
   return verificationLink
 }
 
+async function requireUserBySessionToken(ctx: MutationCtx, sessionToken: string) {
+  const tokenHash = await sha256(sessionToken)
+  const session = await ctx.db
+    .query("authSessions")
+    .withIndex("by_tokenHash", (query) => query.eq("tokenHash", tokenHash))
+    .first()
+
+  if (!session || session.expiresAt <= Date.now()) {
+    throw new Error("Unauthorized.")
+  }
+
+  const user = await ctx.db.get(session.userId)
+  if (!user) {
+    throw new Error("Unauthorized.")
+  }
+
+  return user
+}
+
 export const viewer = query({
   args: {
     sessionToken: v.string(),
@@ -94,6 +150,7 @@ export const viewer = query({
       id: user._id,
       name: user.name,
       email: user.email,
+      avatarKey: normalizeAvatarKey(user.avatarKey),
       emailVerified: Boolean(user.emailVerifiedAt),
     }
   },
@@ -104,6 +161,7 @@ export const signUp = mutation({
     name: v.string(),
     email: v.string(),
     password: v.string(),
+    avatarKey: v.optional(v.string()),
     siteUrl: v.string(),
   },
   handler: async (ctx, args) => {
@@ -130,6 +188,7 @@ export const signUp = mutation({
     const now = Date.now()
     const passwordSalt = randomToken(16)
     const passwordHash = await hashPassword(password, passwordSalt)
+    const avatarKey = normalizeAvatarKey(args.avatarKey)
 
     let userId: Id<"users">
     if (existing) {
@@ -137,6 +196,7 @@ export const signUp = mutation({
         name,
         passwordSalt,
         passwordHash,
+        avatarKey: existing.avatarKey ?? avatarKey,
         updatedAt: now,
       })
       userId = existing._id
@@ -144,6 +204,7 @@ export const signUp = mutation({
       userId = await ctx.db.insert("users", {
         email,
         name,
+        avatarKey,
         passwordHash,
         passwordSalt,
         createdAt: now,
@@ -235,6 +296,7 @@ export const verifyEmail = mutation({
         id: user._id,
         name: user.name,
         email: user.email,
+        avatarKey: normalizeAvatarKey(user.avatarKey),
         emailVerified: true,
       },
     }
@@ -275,6 +337,7 @@ export const signIn = mutation({
         id: user._id,
         name: user.name,
         email: user.email,
+        avatarKey: normalizeAvatarKey(user.avatarKey),
         emailVerified: true,
       },
     }
@@ -297,5 +360,35 @@ export const signOut = mutation({
     }
 
     return { signedOut: true }
+  },
+})
+
+export const updateProfile = mutation({
+  args: {
+    sessionToken: v.string(),
+    name: v.string(),
+    avatarKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySessionToken(ctx, args.sessionToken)
+    const safeName = args.name.trim()
+    const safeAvatarKey = normalizeAvatarKey(args.avatarKey)
+    if (!safeName) {
+      throw new Error("Name is required.")
+    }
+
+    await ctx.db.patch(user._id, {
+      name: safeName,
+      avatarKey: safeAvatarKey,
+      updatedAt: Date.now(),
+    })
+
+    return {
+      id: user._id,
+      name: safeName,
+      email: user.email,
+      avatarKey: safeAvatarKey,
+      emailVerified: Boolean(user.emailVerifiedAt),
+    }
   },
 })

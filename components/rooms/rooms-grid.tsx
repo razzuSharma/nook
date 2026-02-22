@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 
-import type { RoomIconKey } from "@/components/rooms/types"
+import type { RoomAccess, RoomIconKey } from "@/components/rooms/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -49,6 +49,7 @@ type RoomListItem = {
   name: string
   description: string
   mode: string
+  access?: RoomAccess
   membersCount: number
   membersMax: number
   createdAt: number
@@ -59,6 +60,12 @@ type RoomSort = "recent" | "mostJoined"
 
 function roomIcon(key: RoomIconKey) {
   return iconMap[key] ?? Sparkles
+}
+
+function accessLabel(access: RoomAccess) {
+  if (access === "invite_only") return "Invite Only"
+  if (access === "private") return "Private"
+  return "Public"
 }
 
 export function RoomsGrid() {
@@ -85,6 +92,7 @@ export function RoomsGrid() {
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
   const [mode, setMode] = React.useState("")
+  const [access, setAccess] = React.useState<RoomAccess>("public")
   const [membersMax, setMembersMax] = React.useState("8")
   const [joinCode, setJoinCode] = React.useState("")
   const [joinError, setJoinError] = React.useState<string | null>(null)
@@ -108,6 +116,7 @@ export function RoomsGrid() {
     setName("")
     setDescription("")
     setMode("")
+    setAccess("public")
     setMembersMax("8")
   }
 
@@ -125,6 +134,7 @@ export function RoomsGrid() {
       name: trimmedName,
       description: trimmedDescription,
       mode: trimmedMode,
+      access,
       membersMax: safeMax,
       userId,
     })
@@ -257,6 +267,9 @@ export function RoomsGrid() {
                   {room.mode}
                 </Badge>
               </div>
+              <p className="mt-2 text-xs uppercase tracking-wide text-muted-foreground">
+                {accessLabel((room.access ?? "public") as RoomAccess)}
+              </p>
               <h3 className="text-xl font-semibold">{room.name}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{room.description}</p>
               <div className="mt-6 flex items-center justify-between">
@@ -298,7 +311,7 @@ export function RoomsGrid() {
                       Leave
                     </Button>
                   </div>
-                ) : (
+                ) : (room.access ?? "public") === "public" ? (
                   <Button
                     type="button"
                     size="sm"
@@ -307,8 +320,14 @@ export function RoomsGrid() {
                   >
                     Join Room
                   </Button>
+                ) : (
+                  <Badge variant="secondary">
+                    {(room.access ?? "public") === "invite_only"
+                      ? "Invite only"
+                      : "Private"}
+                  </Badge>
                 )}
-                {room.joinCode ? (
+                {(room.access ?? "public") === "public" && room.joinCode ? (
                   <span className="text-xs text-muted-foreground">
                     Code: {room.joinCode}
                   </span>
@@ -406,6 +425,19 @@ export function RoomsGrid() {
                     className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30"
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Access</p>
+                <Select value={access} onValueChange={(value) => setAccess(value as RoomAccess)}>
+                  <SelectTrigger className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30">
+                    <SelectValue placeholder="Select access" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="public">Public</SelectItem>
+                    <SelectItem value="private">Private</SelectItem>
+                    <SelectItem value="invite_only">Invite Only</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>

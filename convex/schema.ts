@@ -5,6 +5,7 @@ export default defineSchema({
   users: defineTable({
     email: v.string(),
     name: v.string(),
+    avatarKey: v.optional(v.string()),
     passwordHash: v.string(),
     passwordSalt: v.string(),
     emailVerifiedAt: v.optional(v.number()),
@@ -33,6 +34,9 @@ export default defineSchema({
     name: v.string(),
     description: v.string(),
     mode: v.string(),
+    access: v.optional(
+      v.union(v.literal("public"), v.literal("private"), v.literal("invite_only"))
+    ),
     membersCount: v.number(),
     membersMax: v.number(),
     joinCode: v.optional(v.string()),
@@ -69,6 +73,7 @@ export default defineSchema({
     title: v.string(),
     note: v.string(),
     assignee: v.string(),
+    assigneeUserId: v.optional(v.id("users")),
     priority: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
     status: v.union(
       v.literal("todo"),
@@ -82,6 +87,25 @@ export default defineSchema({
   })
     .index("by_room_order", ["roomId", "order"])
     .index("by_room_taskId", ["roomId", "taskId"]),
+  roomInvites: defineTable({
+    roomId: v.id("rooms"),
+    email: v.string(),
+    role: v.union(v.literal("viewer"), v.literal("member"), v.literal("admin")),
+    invitedByUserId: v.id("users"),
+    tokenHash: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      v.literal("revoked"),
+      v.literal("expired")
+    ),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    acceptedAt: v.optional(v.number()),
+  })
+    .index("by_room_status", ["roomId", "status"])
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_room_email_status", ["roomId", "email", "status"]),
   roomFocusPresence: defineTable({
     roomId: v.id("rooms"),
     userId: v.id("users"),
