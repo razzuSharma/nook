@@ -108,6 +108,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       ),
     [pinnedRoomIdsQuery, roomDocs]
   )
+  const recentRooms = React.useMemo(() => (roomDocs ?? []).slice(0, 3), [roomDocs])
 
   async function openRoom(roomId: Id<"rooms">) {
     router.push(`/dashboard/rooms/${roomId}`)
@@ -264,6 +265,27 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        {recentRooms.length > 0 ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>RECENT ROOMS</SidebarGroupLabel>
+            <SidebarGroupContent className="rounded-lg border border-cyan-500/10 bg-background/20 p-1 shadow-sm">
+              <SidebarMenu>
+                {recentRooms.map((room) => (
+                  <SidebarMenuItem key={room._id}>
+                    <SidebarMenuButton
+                      onClick={() => {
+                        void openRoom(room._id)
+                      }}
+                    >
+                      <Command />
+                      <span className="line-clamp-2 break-words">{room.name}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
         {pinnedRooms.length > 0 ? (
           <SidebarGroup>
             <SidebarGroupLabel>PINNED</SidebarGroupLabel>

@@ -35,6 +35,7 @@ export const listAssignedByUser = query({
         taskId: task.taskId,
         title: task.title,
         priority: task.priority,
+        effort: task.effort,
         status: task.status,
         dueAt: task.dueAt,
         roomId: task.roomId,
@@ -55,6 +56,14 @@ export const syncByRoom = mutation({
         assignee: v.string(),
         assigneeUserId: v.optional(v.id("users")),
         priority: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+        effort: v.optional(
+          v.union(
+            v.literal("quick"),
+            v.literal("half_day"),
+            v.literal("full_day"),
+            v.literal("multi_day")
+          )
+        ),
         status: v.union(
           v.literal("todo"),
           v.literal("working"),
@@ -109,6 +118,7 @@ export const syncByRoom = mutation({
           assignee: task.assignee,
           assigneeUserId: task.assigneeUserId,
           priority: task.priority,
+          effort: task.effort,
           status: task.status,
           order: task.order,
           dueAt: task.dueAt,
@@ -147,6 +157,13 @@ export const syncByRoom = mutation({
               : "Cleared due date."
           )
         }
+        if ((existingTask.effort ?? undefined) !== (task.effort ?? undefined)) {
+          await logEvent(
+            task.taskId,
+            "effort_updated",
+            task.effort ? `Set effort to ${task.effort}.` : "Cleared effort."
+          )
+        }
       } else {
         await ctx.db.insert("roomTasks", {
           roomId: args.roomId,
@@ -156,6 +173,7 @@ export const syncByRoom = mutation({
           assignee: task.assignee,
           assigneeUserId: task.assigneeUserId,
           priority: task.priority,
+          effort: task.effort,
           status: task.status,
           order: task.order,
           dueAt: task.dueAt,
@@ -208,6 +226,7 @@ export const createQuickTask = mutation({
       note: "",
       assignee: "",
       priority: "medium",
+      effort: "quick",
       status: "todo",
       order,
       createdAt: now,
