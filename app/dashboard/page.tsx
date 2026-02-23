@@ -2,7 +2,16 @@
 
 import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
-import { ArrowUpRight, Flame, Keyboard, Target } from "lucide-react"
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ClipboardList,
+  Flame,
+  Keyboard,
+  MessageSquare,
+  Target,
+  Timer,
+} from "lucide-react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { ActivityFeed } from "@/components/recent-activity/activity-feed"
@@ -13,6 +22,14 @@ import { useAuth } from "@/components/providers/auth-provider"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import {
@@ -21,6 +38,9 @@ import {
 } from "@/components/ui/sidebar"
 import type { Id } from "@/convex/_generated/dataModel"
 import { toast } from "sonner"
+
+const DASHBOARD_ONBOARDING_KEY = "nook.dashboard.onboarding.v1"
+const APP_BOOT_TIME = Date.now()
 
 const metrics = [
   {
@@ -47,6 +67,25 @@ type RoomListItem = {
   _id: Id<"rooms">
   name: string
   createdAt: number
+}
+
+type AssignedRoomTask = {
+  taskId: string
+  title: string
+  priority: "low" | "medium" | "high"
+  status: "todo" | "working" | "blocked" | "completed"
+  dueAt?: number
+  roomName: string
+}
+
+function formatPlanDue(dueAt?: number) {
+  if (!dueAt) return "No deadline"
+  const now = Date.now()
+  if (dueAt < now) return "Overdue"
+  return `Due ${new Date(dueAt).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  })}`
 }
 
 function Sparkline({ points }: { points: number[] }) {
@@ -84,8 +123,13 @@ export default function Page() {
     [joinedRoomIdsQuery]
   )
   const createQuickTask = useMutation(roomTasksApi.createQuickTask)
+  const assignedTasksQuery = useQuery(
+    roomTasksApi.listAssignedByUser,
+    userId ? { userId } : "skip"
+  ) as AssignedRoomTask[] | undefined
   const [quickTask, setQuickTask] = React.useState("")
   const [focusGoalHours] = React.useState(6)
+  const [onboardingOpen, setOnboardingOpen] = React.useState(false)
 
   const latestJoinedRoomId = React.useMemo(() => {
     const sortedByRecency = [...(roomDocs ?? [])].sort(
@@ -96,6 +140,41 @@ export default function Page() {
 
   const focusedHours = 4.2
   const focusPercent = Math.min(100, Math.round((focusedHours / focusGoalHours) * 100))
+  const todayPlan = React.useMemo(() => {
+    const scoreTask = (task: AssignedRoomTask) => {
+      let score = 0
+      if (task.status === "working") score += 35
+      else if (task.status === "todo") score += 25
+      else if (task.status === "blocked") score += 8
+
+      if (task.priority === "high") score += 20
+      else if (task.priority === "medium") score += 10
+
+      if (!task.dueAt) return score + 2
+      const delta = task.dueAt - APP_BOOT_TIME
+      if (delta <= 0) return score + 30
+      if (delta <= 24 * 60 * 60 * 1000) return score + 20
+      if (delta <= 3 * 24 * 60 * 60 * 1000) return score + 10
+      return score + 4
+    }
+
+    return (assignedTasksQuery ?? [])
+      .filter((task) => task.status !== "completed")
+      .sort((left, right) => scoreTask(right) - scoreTask(left))
+      .slice(0, 3)
+  }, [assignedTasksQuery])
+
+  React.useEffect(() => {
+    const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
+    const seen = window.localStorage.getItem(userKey)
+    if (!seen) setOnboardingOpen(true)
+  }, [userId])
+
+  function completeOnboarding() {
+    const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
+    window.localStorage.setItem(userKey, "done")
+    setOnboardingOpen(false)
+  }
 
   async function submitQuickTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -216,6 +295,60 @@ export default function Page() {
               </p>
             </div>
 
+            <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Today Plan</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Top work to finish today from your assigned room tasks.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!latestJoinedRoomId}
+                  onClick={() => {
+                    if (!latestJoinedRoomId) return
+                    window.location.href = `/dashboard/rooms/${latestJoinedRoomId}/tasks`
+                  }}
+                >
+                  Open Room Tasks
+                </Button>
+              </div>
+              {todayPlan.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No assigned tasks yet. Join a room and assign your first task.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {todayPlan.map((task, index) => (
+                    <li
+                      key={`${task.roomName}-${task.taskId}`}
+                      className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium">
+                          {index + 1}. {task.title}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <Badge variant="secondary" className="capitalize">
+                            {task.status === "working" ? "In Progress" : task.status}
+                          </Badge>
+                          <Badge variant="outline" className="capitalize">
+                            {task.priority}
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {task.roomName} • {formatPlanDue(task.dueAt)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             <RoomsGrid />
 
             <div className="mt-10">
@@ -250,6 +383,92 @@ export default function Page() {
         </div>
       </SidebarInset>
       <RightSidebar />
+      <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
+        <DialogContent
+          className="sm:max-w-[580px]"
+          overlayClassName="bg-black/65 backdrop-blur-[3px]"
+        >
+          <DialogHeader>
+            <DialogTitle>Your daily flow in 3 steps</DialogTitle>
+            <DialogDescription>
+              Plan, focus, and unblock without switching apps.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 px-1 text-sm">
+            <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+              <span>Step 1 of 3</span>
+              <div className="flex items-center gap-1.5" aria-hidden>
+                <span className="h-1.5 w-5 rounded-full bg-cyan-500" />
+                <span className="h-1.5 w-5 rounded-full bg-cyan-500/25" />
+                <span className="h-1.5 w-5 rounded-full bg-cyan-500/25" />
+              </div>
+            </div>
+            <div className="rounded-lg border border-cyan-500/20 border-l-4 border-l-cyan-500 bg-cyan-500/5 p-4">
+              <p className="flex items-center gap-2 font-medium">
+                <span className="inline-flex size-7 items-center justify-center rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                  1
+                </span>
+                <ClipboardList className="size-4 text-cyan-700 dark:text-cyan-300" />
+                Pick today&apos;s top tasks
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                Use the Today Plan and task board to lock in the top priorities.
+              </p>
+            </div>
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
+              <p className="flex items-center gap-2 font-medium">
+                <span className="inline-flex size-7 items-center justify-center rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                  2
+                </span>
+                <Timer className="size-4 text-cyan-700 dark:text-cyan-300" />
+                Start focused work from the task
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                Open a room task and start focus directly from that card.
+              </p>
+            </div>
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
+              <p className="flex items-center gap-2 font-medium">
+                <span className="inline-flex size-7 items-center justify-center rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                  3
+                </span>
+                <MessageSquare className="size-4 text-cyan-700 dark:text-cyan-300" />
+                Resolve blockers in task discussion
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                Keep chat, files, and history attached to the task to reduce context switching.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              onClick={completeOnboarding}
+              className="gap-1.5 bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+            >
+              Continue to Dashboard
+              <ArrowRight className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                completeOnboarding()
+                window.dispatchEvent(new Event("nook:create-room"))
+              }}
+            >
+              Create Room
+            </Button>
+          </DialogFooter>
+          <button
+            type="button"
+            className="mx-auto mt-1 block text-xs text-muted-foreground underline"
+            onClick={completeOnboarding}
+          >
+            Don&apos;t show again
+          </button>
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   )
 }
