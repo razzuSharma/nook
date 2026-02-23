@@ -55,6 +55,7 @@ type RoomListItem = {
 }
 
 const NOTES_STORAGE_KEY = "nook.right.sidebar.notes.v1"
+const COLLAPSED_STORAGE_KEY = "nook.right.sidebar.collapsed.v1"
 
 function startOfToday() {
   const now = new Date()
@@ -79,7 +80,12 @@ function formatDue(timestamp?: number) {
 export function RightSidebar() {
   const { user, sessionToken } = useAuth()
   const [collapsed, setCollapsed] = React.useState(false)
+  const [hasLoadedCollapsedPref, setHasLoadedCollapsedPref] = React.useState(false)
   const [notes, setNotes] = React.useState("")
+  const collapsedStorageKey = React.useMemo(
+    () => `${COLLAPSED_STORAGE_KEY}:${user?.id ?? "guest"}`,
+    [user?.id]
+  )
 
   const focusSessions = useQuery(
     focusSessionsApi.list,
@@ -101,8 +107,24 @@ export function RightSidebar() {
   }, [])
 
   React.useEffect(() => {
+    const saved = window.localStorage.getItem(collapsedStorageKey)
+    if (saved === "1") {
+      setCollapsed(true)
+    } else {
+      // First visit defaults to expanded.
+      setCollapsed(false)
+    }
+    setHasLoadedCollapsedPref(true)
+  }, [collapsedStorageKey])
+
+  React.useEffect(() => {
     window.localStorage.setItem(NOTES_STORAGE_KEY, notes)
   }, [notes])
+
+  React.useEffect(() => {
+    if (!hasLoadedCollapsedPref) return
+    window.localStorage.setItem(collapsedStorageKey, collapsed ? "1" : "0")
+  }, [collapsed, collapsedStorageKey, hasLoadedCollapsedPref])
 
   const todayFocusHours = React.useMemo(() => {
     const today = startOfToday()

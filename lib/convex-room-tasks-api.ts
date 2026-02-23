@@ -17,6 +17,7 @@ type RoomTasksApiShape = {
       taskId: string
       title: string
       priority: "low" | "medium" | "high"
+      effort?: "quick" | "half_day" | "full_day" | "multi_day"
       status: "todo" | "working" | "blocked" | "completed"
       dueAt?: number
       roomId: Id<"rooms">
@@ -36,6 +37,7 @@ type RoomTasksApiShape = {
         assignee: string
         assigneeUserId?: Id<"users">
         priority: "low" | "medium" | "high"
+        effort?: "quick" | "half_day" | "full_day" | "multi_day"
         status: "todo" | "working" | "blocked" | "completed"
         dueAt?: number
         order: number

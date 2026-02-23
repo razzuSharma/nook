@@ -24,10 +24,12 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery } from "convex/react"
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Crosshair,
   Paperclip,
+  Play,
   GripVertical,
   Info,
   Link2,
@@ -36,10 +38,10 @@ import {
   PauseCircle,
   Pencil,
   Plus,
-  Smile,
   Search,
   Send,
   SlidersHorizontal,
+  Square,
   Trash2,
   UserRound,
 } from "lucide-react"
@@ -47,12 +49,21 @@ import {
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { roomTaskChatApi } from "@/lib/convex-room-task-chat-api"
 import { useAuth } from "@/components/providers/auth-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Drawer,
   DrawerContent,
@@ -96,6 +107,8 @@ import { cn } from "@/lib/utils"
 
 type TaskStatus = "todo" | "working" | "blocked" | "completed"
 type TaskPriority = "low" | "medium" | "high"
+type TaskEffort = "quick" | "half_day" | "full_day" | "multi_day"
+type DuePreset = "none" | "today" | "tomorrow" | "this_week" | "next_week" | "custom"
 
 type RoomMember = {
   userId: string
@@ -112,6 +125,7 @@ type RoomTask = {
   assignee: string
   assigneeUserId?: string
   priority: TaskPriority
+  effort?: TaskEffort
   status: TaskStatus
   dueAt?: number
 }
@@ -145,6 +159,13 @@ type TaskThreadData = {
   }>
 }
 
+type FocusPresenceItem = {
+  userId: string
+  taskId?: string
+  endsAt: number | null
+  status: string
+}
+
 export type RoomTaskFocusTarget = {
   id: string
   title: string
@@ -168,6 +189,47 @@ const boardColumns: Array<{
 ]
 
 const statusOrder: TaskStatus[] = ["todo", "working", "blocked", "completed"]
+const IN_PROGRESS_WIP_LIMIT = 3
+const duePresetOptions: Array<{ value: Exclude<DuePreset, "custom" | "none">; label: string }> = [
+  { value: "today", label: "Today" },
+  { value: "tomorrow", label: "Tomorrow" },
+  { value: "this_week", label: "This Week" },
+  { value: "next_week", label: "Next Week" },
+]
+
+function computeDueAtFromPreset(preset: DuePreset, customValue: string) {
+  const now = new Date()
+  const atSix = (source: Date) => {
+    const date = new Date(source)
+    date.setHours(18, 0, 0, 0)
+    return date.getTime()
+  }
+
+  if (preset === "none") return undefined
+  if (preset === "today") return atSix(now)
+  if (preset === "tomorrow") {
+    const date = new Date(now)
+    date.setDate(date.getDate() + 1)
+    return atSix(date)
+  }
+  if (preset === "this_week") {
+    const date = new Date(now)
+    const day = date.getDay()
+    const fridayOffset = day <= 5 ? 5 - day : 12 - day
+    date.setDate(date.getDate() + fridayOffset)
+    return atSix(date)
+  }
+  if (preset === "next_week") {
+    const date = new Date(now)
+    const day = date.getDay()
+    const fridayOffset = day <= 5 ? 12 - day : 19 - day
+    date.setDate(date.getDate() + fridayOffset)
+    return atSix(date)
+  }
+  if (!customValue) return undefined
+  const parsed = new Date(customValue).getTime()
+  return Number.isNaN(parsed) ? undefined : parsed
+}
 
 function toBoardState(tasks: RoomTask[]): TaskBoardState {
   return {
@@ -193,6 +255,7 @@ function tasksEqual(a: RoomTask[], b: RoomTask[]) {
       a[i].assigneeUserId !== b[i].assigneeUserId ||
       a[i].dueAt !== b[i].dueAt ||
       a[i].priority !== b[i].priority ||
+      a[i].effort !== b[i].effort ||
       a[i].status !== b[i].status
     ) {
       return false
@@ -220,6 +283,27 @@ function dueStateClass(dueAt?: number) {
   if (dueAt < now) return "text-red-600 dark:text-red-300"
   if (dueAt - now < 24 * 60 * 60 * 1000) return "text-amber-600 dark:text-amber-300"
   return "text-muted-foreground"
+}
+
+function formatDueLabel(dueAt?: number) {
+  if (!dueAt) return "No due date"
+  const now = Date.now()
+  if (dueAt < now) {
+    const elapsedDays = Math.max(1, Math.floor((now - dueAt) / (24 * 60 * 60 * 1000)))
+    return `Overdue · ${elapsedDays} day${elapsedDays > 1 ? "s" : ""}`
+  }
+  return `Due ${new Date(dueAt).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  })}`
+}
+
+function effortLabel(effort?: TaskEffort) {
+  if (!effort) return null
+  if (effort === "half_day") return "Half day"
+  if (effort === "full_day") return "Full day"
+  if (effort === "multi_day") return "Multi-day"
+  return "Quick"
 }
 
 function statusLabel(status: TaskStatus) {
@@ -305,6 +389,10 @@ function BaseTaskCard({
   onEdit,
   onStartFocus,
   onDiscuss,
+  onStartTaskFocus,
+  onStopTaskFocus,
+  isTaskFocusing = false,
+  focusRemainingLabel,
   dragBindings,
   isDraggable = false,
 }: {
@@ -313,6 +401,10 @@ function BaseTaskCard({
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
+  onStartTaskFocus?: (task: RoomTask) => void
+  onStopTaskFocus?: () => void
+  isTaskFocusing?: boolean
+  focusRemainingLabel?: string
   dragBindings?: React.HTMLAttributes<HTMLElement>
   isDraggable?: boolean
 }) {
@@ -339,9 +431,11 @@ function BaseTaskCard({
           </h4>
         </div>
         <div className="flex items-center gap-1">
-          <Badge className={cn("capitalize", priorityClass(task.priority))}>
-            {task.priority}
-          </Badge>
+          {task.priority === "high" ? (
+            <Badge className={cn("capitalize", priorityClass(task.priority))}>
+              {task.priority}
+            </Badge>
+          ) : null}
           {hasActions ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -390,11 +484,11 @@ function BaseTaskCard({
           ) : null}
         </div>
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{task.note}</p>
-      {task.dueAt ? (
-        <p className={cn("mt-2 text-xs", dueStateClass(task.dueAt))}>
-          Due {new Date(task.dueAt).toLocaleString()}
-        </p>
+      <p className={cn("mt-1 text-xs", dueStateClass(task.dueAt))}>
+        {formatDueLabel(task.dueAt)}
+      </p>
+      {task.effort && task.effort !== "quick" ? (
+        <p className="mt-1 text-[11px] text-muted-foreground">Effort: {effortLabel(task.effort)}</p>
       ) : null}
       <div className="mt-3 flex items-center gap-2">
         {task.assigneeUserId && task.assignee ? (
@@ -422,6 +516,39 @@ function BaseTaskCard({
           </div>
         )}
       </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {isTaskFocusing ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 border-rose-500/30 px-2 text-[11px] text-rose-700 hover:bg-rose-500/10 dark:text-rose-300"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onStopTaskFocus?.()
+            }}
+          >
+            <Square className="size-3.5" />
+            End Focus {focusRemainingLabel ? `(${focusRemainingLabel})` : ""}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 border-cyan-500/30 px-2 text-[11px] text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-300"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onStartTaskFocus?.(task)
+            }}
+          >
+            <Play className="size-3.5" />
+            Start Focus
+          </Button>
+        )}
+      </div>
     </article>
   )
 }
@@ -432,6 +559,10 @@ function SortableTaskCard(props: {
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
+  onStartTaskFocus?: (task: RoomTask) => void
+  onStopTaskFocus?: () => void
+  isTaskFocusing?: boolean
+  focusRemainingLabel?: string
 }) {
   const { task } = props
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -470,7 +601,7 @@ function ColumnDropZone({
       ref={setNodeRef}
       className={cn(
         "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur transition-colors",
-        muted && "border-dashed bg-transparent/10 opacity-70 shadow-none",
+        muted && "border-dashed bg-transparent opacity-65 shadow-none",
         isOver && "bg-[color:var(--nook-sidebar-input-bg)]"
       )}
     >
@@ -487,6 +618,7 @@ export function RoomTaskBoard({
   onStartFocusTask?: (task: RoomTaskFocusTarget) => void
 }) {
   const { sessionToken, user } = useAuth()
+  const [now, setNow] = React.useState(() => Date.now())
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
     | Array<{
         taskId: string
@@ -495,6 +627,7 @@ export function RoomTaskBoard({
         assignee: string
         assigneeUserId?: string
         priority: TaskPriority
+        effort?: TaskEffort
         status: TaskStatus
         dueAt?: number
       }>
@@ -503,6 +636,10 @@ export function RoomTaskBoard({
     roomsApi.listMembersByRoom,
     sessionToken ? { sessionToken, roomId } : "skip"
   ) as RoomMember[] | undefined
+  const focusPresence = useQuery(
+    roomFocusApi.listPresence,
+    sessionToken ? { sessionToken, roomId } : "skip"
+  ) as FocusPresenceItem[] | undefined
   const members = React.useMemo(() => membersQuery ?? [], [membersQuery])
 
   const memberNameById = React.useMemo(
@@ -515,6 +652,8 @@ export function RoomTaskBoard({
   )
 
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
+  const startRoomFocus = useMutation(roomFocusApi.start)
+  const completeRoomFocus = useMutation(roomFocusApi.complete)
   const sendThreadMessage = useMutation(roomTaskChatApi.sendMessage)
   const shareThreadFile = useMutation(roomTaskChatApi.shareFile)
   const generateThreadUploadUrl = useMutation(roomTaskChatApi.generateUploadUrl)
@@ -529,6 +668,7 @@ export function RoomTaskBoard({
       assignee: task.assignee,
       assigneeUserId: task.assigneeUserId,
       priority: task.priority,
+      effort: task.effort,
       status: task.status,
       dueAt: task.dueAt,
     }))
@@ -539,7 +679,10 @@ export function RoomTaskBoard({
   const [draftNote, setDraftNote] = React.useState("")
   const [draftAssigneeUserId, setDraftAssigneeUserId] = React.useState("none")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
+  const [draftEffort, setDraftEffort] = React.useState<TaskEffort>("quick")
   const [draftStatus, setDraftStatus] = React.useState<TaskStatus>("todo")
+  const [draftDuePreset, setDraftDuePreset] = React.useState<DuePreset>("none")
+  const [showDraftSpecificDue, setShowDraftSpecificDue] = React.useState(false)
   const [draftDueAt, setDraftDueAt] = React.useState("")
   const [isAddTaskOpen, setIsAddTaskOpen] = React.useState(false)
   const [isMemberProgressOpen, setIsMemberProgressOpen] = React.useState(false)
@@ -554,7 +697,10 @@ export function RoomTaskBoard({
   const [editNote, setEditNote] = React.useState("")
   const [editAssigneeUserId, setEditAssigneeUserId] = React.useState("none")
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("medium")
+  const [editEffort, setEditEffort] = React.useState<TaskEffort>("quick")
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
+  const [editDuePreset, setEditDuePreset] = React.useState<DuePreset>("custom")
+  const [showEditSpecificDue, setShowEditSpecificDue] = React.useState(false)
   const [editDueAt, setEditDueAt] = React.useState("")
   const [threadTaskId, setThreadTaskId] = React.useState<string | null>(null)
   const [threadTab, setThreadTab] = React.useState<"chat" | "files" | "history">("chat")
@@ -568,6 +714,11 @@ export function RoomTaskBoard({
     Record<string, string[]>
   >({})
   const [threadError, setThreadError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const thread = useQuery(
     roomTaskChatApi.listThread,
@@ -596,6 +747,7 @@ export function RoomTaskBoard({
       assignee: task.assignee,
       assigneeUserId: task.assigneeUserId as Id<"users"> | undefined,
       priority: task.priority,
+      effort: task.effort,
       status: task.status,
       dueAt: task.dueAt,
       order: index,
@@ -762,7 +914,7 @@ export function RoomTaskBoard({
 
     const assigneeUserId = draftAssigneeUserId === "none" ? undefined : draftAssigneeUserId
     const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
-    const dueAt = draftDueAt ? new Date(draftDueAt).getTime() : undefined
+    const dueAt = computeDueAtFromPreset(draftDuePreset, draftDueAt)
 
     const task: RoomTask = {
       id: `rt-${Date.now()}`,
@@ -771,6 +923,7 @@ export function RoomTaskBoard({
       assignee,
       assigneeUserId,
       priority: draftPriority,
+      effort: draftEffort,
       status: draftStatus,
       dueAt,
     }
@@ -787,13 +940,18 @@ export function RoomTaskBoard({
     setDraftNote("")
     setDraftAssigneeUserId("none")
     setDraftPriority("medium")
+    setDraftEffort("quick")
     setDraftStatus("todo")
+    setDraftDuePreset("none")
+    setShowDraftSpecificDue(false)
     setDraftDueAt("")
     setIsAddTaskOpen(false)
   }
 
   function openAddTask(status: TaskStatus = "todo") {
     setDraftStatus(status)
+    setDraftDuePreset("none")
+    setShowDraftSpecificDue(false)
     setIsAddTaskOpen(true)
   }
 
@@ -803,7 +961,10 @@ export function RoomTaskBoard({
     setEditNote(task.note)
     setEditAssigneeUserId(task.assigneeUserId ?? "none")
     setEditPriority(task.priority)
+    setEditEffort(task.effort ?? "quick")
     setEditStatus(task.status)
+    setEditDuePreset(task.dueAt ? "custom" : "none")
+    setShowEditSpecificDue(Boolean(task.dueAt))
     setEditDueAt(task.dueAt ? new Date(task.dueAt).toISOString().slice(0, 16) : "")
   }
 
@@ -812,7 +973,7 @@ export function RoomTaskBoard({
     const nextStatus = editStatus
     const assigneeUserId = editAssigneeUserId === "none" ? undefined : editAssigneeUserId
     const assignee = assigneeUserId ? memberNameById.get(assigneeUserId) ?? "" : ""
-    const dueAt = editDueAt ? new Date(editDueAt).getTime() : undefined
+    const dueAt = computeDueAtFromPreset(editDuePreset, editDueAt)
 
     setBoard((prev) => {
       const next = { ...prev }
@@ -827,6 +988,7 @@ export function RoomTaskBoard({
             assignee,
             assigneeUserId,
             priority: editPriority,
+            effort: editEffort,
             status: nextStatus,
             dueAt,
           }
@@ -969,6 +1131,45 @@ export function RoomTaskBoard({
     } as TaskBoardState
   }, [assigneeFilter, board, dueFilter, priorityFilter, searchQuery, sortMode, user?.id])
 
+  const currentUserFocus = React.useMemo(() => {
+    if (!user?.id || !focusPresence) return null
+    return (
+      focusPresence.find(
+        (item) => item.userId === user.id && item.status === "focusing"
+      ) ?? null
+    )
+  }, [focusPresence, user?.id])
+
+  const currentFocusTaskId = currentUserFocus?.taskId
+  const currentFocusRemainingLabel = React.useMemo(() => {
+    if (!currentUserFocus?.endsAt) return null
+    const seconds = Math.max(0, Math.ceil((currentUserFocus.endsAt - now) / 1000))
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, "0")}`
+  }, [currentUserFocus?.endsAt, now])
+
+  async function startTaskFocus(task: RoomTask) {
+    if (!sessionToken) return
+    await startRoomFocus({
+      sessionToken,
+      roomId,
+      intention: task.title,
+      durationMinutes: 25,
+      taskId: task.id,
+      visibility: "room",
+    })
+  }
+
+  async function stopTaskFocus() {
+    if (!sessionToken) return
+    await completeRoomFocus({
+      sessionToken,
+      roomId,
+      reflection: "",
+    })
+  }
+
   function clearFilters() {
     setSearchQuery("")
     setAssigneeFilter("all")
@@ -1002,6 +1203,10 @@ export function RoomTaskBoard({
         return left.member.name.localeCompare(right.member.name)
       })
   }, [boardTasks, members])
+  const nowTasks = React.useMemo(() => board.working.slice(0, 4), [board.working])
+  const nextTasks = React.useMemo(() => board.todo.slice(0, 4), [board.todo])
+  const blockedTasks = React.useMemo(() => board.blocked.slice(0, 4), [board.blocked])
+  const isWipOverLimit = board.working.length > IN_PROGRESS_WIP_LIMIT
 
   return (
     <div className="space-y-5">
@@ -1184,6 +1389,62 @@ export function RoomTaskBoard({
         </CardContent>
       </Card>
 
+      <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Flow Snapshot</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <section className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
+              Now
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {nowTasks.length === 0 ? (
+                <li className="text-xs text-muted-foreground">No active tasks.</li>
+              ) : (
+                nowTasks.map((task) => (
+                  <li key={`now-${task.id}`} className="line-clamp-1">
+                    {task.title}
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
+          <section className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
+              Next
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {nextTasks.length === 0 ? (
+                <li className="text-xs text-muted-foreground">Queue is clear.</li>
+              ) : (
+                nextTasks.map((task) => (
+                  <li key={`next-${task.id}`} className="line-clamp-1">
+                    {task.title}
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
+          <section className="rounded-lg border border-rose-500/25 bg-rose-500/10 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+              Blocked
+            </p>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {blockedTasks.length === 0 ? (
+                <li className="text-xs text-muted-foreground">No blockers right now.</li>
+              ) : (
+                blockedTasks.map((task) => (
+                  <li key={`blocked-${task.id}`} className="line-clamp-1">
+                    {task.title}
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
+        </CardContent>
+      </Card>
+
       {hasActiveFilters ? (
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
@@ -1211,15 +1472,16 @@ export function RoomTaskBoard({
                         <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
                           {column.subtitle}
                         </p>
+                        {column.id === "working" && isWipOverLimit ? (
+                          <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+                            <AlertTriangle className="size-3.5" />
+                            WIP limit exceeded ({board.working.length}/{IN_PROGRESS_WIP_LIMIT})
+                          </p>
+                        ) : null}
                       </div>
                       <Badge variant="secondary">{items.length}</Badge>
                     </div>
                     <div className="space-y-3">
-                      {items.length === 0 ? (
-                        <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
-                          No matching tasks
-                        </p>
-                      ) : null}
                       {items.map((task) => (
                         <BaseTaskCard
                           key={task.id}
@@ -1237,14 +1499,31 @@ export function RoomTaskBoard({
                             setShowFileLinkInput(false)
                             setThreadError(null)
                           }}
+                          onStartTaskFocus={(selectedTask) => {
+                            void startTaskFocus(selectedTask)
+                          }}
+                          onStopTaskFocus={() => {
+                            void stopTaskFocus()
+                          }}
+                          isTaskFocusing={currentFocusTaskId === task.id}
+                          focusRemainingLabel={
+                            currentFocusTaskId === task.id
+                              ? (currentFocusRemainingLabel ?? undefined)
+                              : undefined
+                          }
                         />
                       ))}
                     </div>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant={items.length === 0 ? "outline" : "ghost"}
                       size="sm"
-                      className="mt-3 w-full justify-start text-muted-foreground hover:text-foreground"
+                      className={cn(
+                        "mt-3 w-full justify-start hover:text-foreground",
+                        items.length === 0
+                          ? "border-dashed text-muted-foreground"
+                          : "text-muted-foreground"
+                      )}
                       onClick={() => openAddTask(column.id)}
                     >
                       <Plus className="size-4" />
@@ -1281,6 +1560,12 @@ export function RoomTaskBoard({
                         <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
                           {column.subtitle}
                         </p>
+                        {column.id === "working" && isWipOverLimit ? (
+                          <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+                            <AlertTriangle className="size-3.5" />
+                            WIP limit exceeded ({board.working.length}/{IN_PROGRESS_WIP_LIMIT})
+                          </p>
+                        ) : null}
                       </div>
                       <Badge variant="secondary">{items.length}</Badge>
                     </div>
@@ -1289,11 +1574,6 @@ export function RoomTaskBoard({
                       strategy={verticalListSortingStrategy}
                     >
                       <div className="space-y-3">
-                        {items.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
-                            No tasks yet
-                          </p>
-                        ) : null}
                         {items.map((task) => (
                           <SortableTaskCard
                             key={task.id}
@@ -1311,15 +1591,32 @@ export function RoomTaskBoard({
                               setShowFileLinkInput(false)
                               setThreadError(null)
                             }}
+                            onStartTaskFocus={(selectedTask) => {
+                              void startTaskFocus(selectedTask)
+                            }}
+                            onStopTaskFocus={() => {
+                              void stopTaskFocus()
+                            }}
+                            isTaskFocusing={currentFocusTaskId === task.id}
+                            focusRemainingLabel={
+                              currentFocusTaskId === task.id
+                                ? (currentFocusRemainingLabel ?? undefined)
+                                : undefined
+                            }
                           />
                         ))}
                       </div>
                     </SortableContext>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant={items.length === 0 ? "outline" : "ghost"}
                       size="sm"
-                      className="mt-3 w-full justify-start text-muted-foreground hover:text-foreground"
+                      className={cn(
+                        "mt-3 w-full justify-start hover:text-foreground",
+                        items.length === 0
+                          ? "border-dashed text-muted-foreground"
+                          : "text-muted-foreground"
+                      )}
                       onClick={() => openAddTask(column.id)}
                     >
                       <Plus className="size-4" />
@@ -1335,9 +1632,11 @@ export function RoomTaskBoard({
               <article className="w-[280px] rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/95 p-3 shadow-xl">
                 <div className="mb-2 flex items-start justify-between gap-2">
                   <h4 className="text-sm font-medium">{activeTask.title}</h4>
-                  <Badge className={cn("capitalize", priorityClass(activeTask.priority))}>
-                    {activeTask.priority}
-                  </Badge>
+                  {activeTask.priority === "high" ? (
+                    <Badge className={cn("capitalize", priorityClass(activeTask.priority))}>
+                      {activeTask.priority}
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground">{activeTask.note}</p>
                 {activeTask.assigneeUserId && activeTask.assignee ? (
@@ -1449,15 +1748,13 @@ export function RoomTaskBoard({
         ) : null}
       </Card>
 
-      <Drawer open={isAddTaskOpen} onOpenChange={setIsAddTaskOpen}>
-        <DrawerContent className="border-[color:var(--nook-sidebar-border)]">
-          <DrawerHeader>
-            <DrawerTitle>Add Room Task</DrawerTitle>
-            <DrawerDescription>
-              Create a task directly in the selected column.
-            </DrawerDescription>
-          </DrawerHeader>
-          <div className="space-y-3 px-4 pb-2">
+      <Dialog open={isAddTaskOpen} onOpenChange={setIsAddTaskOpen}>
+        <DialogContent className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-bg-end)] p-0 sm:max-w-[560px]">
+          <DialogHeader className="border-b border-[color:var(--nook-sidebar-border)] px-5 py-4 text-left">
+            <DialogTitle>Add Room Task</DialogTitle>
+            <DialogDescription>Create a task directly in the selected column.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 px-5 py-4">
             <Input
               value={draftTitle}
               onChange={(event) => setDraftTitle(event.target.value)}
@@ -1468,7 +1765,8 @@ export function RoomTaskBoard({
               value={draftNote}
               onChange={(event) => setDraftNote(event.target.value)}
               placeholder="What needs to be done?"
-              className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
+              rows={3}
+              className="min-h-0 w-full resize-y rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
             />
             <div className="grid gap-3 sm:grid-cols-2">
               <Select
@@ -1511,15 +1809,65 @@ export function RoomTaskBoard({
                   <SelectItem value="high">High</SelectItem>
                 </SelectContent>
               </Select>
-              <Input
-                type="datetime-local"
-                value={draftDueAt}
-                onChange={(event) => setDraftDueAt(event.target.value)}
-                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-              />
+              <Select
+                value={draftEffort}
+                onValueChange={(value) => setDraftEffort(value as TaskEffort)}
+              >
+                <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                  <SelectValue placeholder="Effort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="quick">Quick</SelectItem>
+                  <SelectItem value="half_day">Half day</SelectItem>
+                  <SelectItem value="full_day">Full day</SelectItem>
+                  <SelectItem value="multi_day">Multi-day</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Deadline</p>
+              <div className="flex flex-wrap gap-2">
+                {duePresetOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      setDraftDuePreset(option.value)
+                      setShowDraftSpecificDue(false)
+                    }}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      draftDuePreset === option.value
+                        ? "border-cyan-400/70 bg-cyan-500/18 text-cyan-700 shadow-[0_0_0_1px_rgba(34,211,238,0.2)] dark:text-cyan-200"
+                        : "border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] text-muted-foreground hover:border-cyan-500/45 hover:text-foreground"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="text-xs text-cyan-700 underline dark:text-cyan-300"
+                onClick={() => {
+                  setDraftDuePreset("custom")
+                  setShowDraftSpecificDue((prev) => !prev || draftDuePreset !== "custom")
+                }}
+              >
+                Pick specific date
+              </button>
+              {showDraftSpecificDue && draftDuePreset === "custom" ? (
+                <Input
+                  type="datetime-local"
+                  value={draftDueAt}
+                  onChange={(event) => setDraftDueAt(event.target.value)}
+                  className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+                />
+              ) : null}
             </div>
           </div>
-          <DrawerFooter>
+          <DialogFooter className="border-t border-[color:var(--nook-sidebar-border)] px-5 py-4 sm:justify-end">
             <Button
               type="button"
               onClick={addTask}
@@ -1532,9 +1880,9 @@ export function RoomTaskBoard({
             <Button type="button" variant="outline" onClick={() => setIsAddTaskOpen(false)}>
               Cancel
             </Button>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Drawer
         open={Boolean(editingTask)}
@@ -1582,6 +1930,20 @@ export function RoomTaskBoard({
                 </SelectContent>
               </Select>
               <Select
+                value={editEffort}
+                onValueChange={(value) => setEditEffort(value as TaskEffort)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Effort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="quick">Quick</SelectItem>
+                  <SelectItem value="half_day">Half day</SelectItem>
+                  <SelectItem value="full_day">Full day</SelectItem>
+                  <SelectItem value="multi_day">Multi-day</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
                 value={editStatus}
                 onValueChange={(value) => setEditStatus(value as TaskStatus)}
               >
@@ -1596,11 +1958,57 @@ export function RoomTaskBoard({
                 </SelectContent>
               </Select>
             </div>
-            <Input
-              type="datetime-local"
-              value={editDueAt}
-              onChange={(event) => setEditDueAt(event.target.value)}
-            />
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Deadline</p>
+              <div className="flex flex-wrap gap-2">
+                {duePresetOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      setEditDuePreset(option.value)
+                      setShowEditSpecificDue(false)
+                    }}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      editDuePreset === option.value
+                        ? "border-cyan-400/70 bg-cyan-500/18 text-cyan-700 shadow-[0_0_0_1px_rgba(34,211,238,0.2)] dark:text-cyan-200"
+                        : "border-input bg-[color:var(--nook-sidebar-input-bg)] text-muted-foreground hover:border-cyan-500/45 hover:text-foreground"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="text-xs text-cyan-700 underline dark:text-cyan-300"
+                onClick={() => {
+                  setEditDuePreset("custom")
+                  setShowEditSpecificDue((prev) => !prev || editDuePreset !== "custom")
+                }}
+              >
+                Pick specific date
+              </button>
+              <button
+                type="button"
+                className="ml-3 text-xs text-muted-foreground underline"
+                onClick={() => {
+                  setEditDuePreset("none")
+                  setShowEditSpecificDue(false)
+                  setEditDueAt("")
+                }}
+              >
+                Clear deadline
+              </button>
+              {showEditSpecificDue && editDuePreset === "custom" ? (
+                <Input
+                  type="datetime-local"
+                  value={editDueAt}
+                  onChange={(event) => setEditDueAt(event.target.value)}
+                />
+              ) : null}
+            </div>
           </div>
           <DrawerFooter>
             <Button
@@ -1740,23 +2148,8 @@ export function RoomTaskBoard({
                     onChange={(event) => setThreadMessage(event.target.value)}
                     placeholder="Write a message about this task..."
                     className="pr-20"
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && event.shiftKey) return
-                      if (event.key === "Enter") {
-                        event.preventDefault()
-                        void postThreadMessage()
-                      }
-                    }}
                   />
                   <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                    <button
-                      type="button"
-                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      onClick={() => setThreadMessage((prev) => `${prev}😊`)}
-                      aria-label="Add emoji"
-                    >
-                      <Smile className="size-4" />
-                    </button>
                     <button
                       type="button"
                       className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -1769,9 +2162,6 @@ export function RoomTaskBoard({
                 </div>
                 <Button
                   type="submit"
-                  onClick={() => {
-                    void postThreadMessage()
-                  }}
                   className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
                 >
                   <Send className="size-4" />

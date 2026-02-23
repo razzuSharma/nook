@@ -53,7 +53,7 @@ export function AvatarPicker({ value, onChange, className }: AvatarPickerProps) 
             </div>
             <div
               className={cn(
-                "absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/80 to-transparent px-2 py-1 text-left text-[11px] text-cyan-50",
+                "absolute inset-x-0 bottom-0 bg-linear-to-t from-slate-950/80 to-transparent px-2 py-1 text-left text-[11px] text-cyan-50",
                 isSelected ? "opacity-100" : "opacity-0 transition-opacity group-hover:opacity-100"
               )}
             >

@@ -98,6 +98,14 @@ export default defineSchema({
     assignee: v.string(),
     assigneeUserId: v.optional(v.id("users")),
     priority: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    effort: v.optional(
+      v.union(
+        v.literal("quick"),
+        v.literal("half_day"),
+        v.literal("full_day"),
+        v.literal("multi_day")
+      )
+    ),
     status: v.union(
       v.literal("todo"),
       v.literal("working"),
