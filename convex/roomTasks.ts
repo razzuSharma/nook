@@ -13,6 +13,36 @@ export const listByRoom = query({
   },
 })
 
+export const listAssignedByUser = query({
+  args: {
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tasks = await ctx.db.query("roomTasks").collect()
+    const assigned = tasks.filter(
+      (task) => String(task.assigneeUserId ?? "") === args.userId
+    )
+    const roomIds = Array.from(new Set(assigned.map((task) => task.roomId)))
+    const roomNames = new Map<string, string>()
+    for (const roomId of roomIds) {
+      const room = await ctx.db.get(roomId)
+      if (room) roomNames.set(String(room._id), room.name)
+    }
+
+    return assigned
+      .sort((left, right) => (left.dueAt ?? Number.MAX_SAFE_INTEGER) - (right.dueAt ?? Number.MAX_SAFE_INTEGER))
+      .map((task) => ({
+        taskId: task.taskId,
+        title: task.title,
+        priority: task.priority,
+        status: task.status,
+        dueAt: task.dueAt,
+        roomId: task.roomId,
+        roomName: roomNames.get(String(task.roomId)) ?? "Room",
+      }))
+  },
+})
+
 export const syncByRoom = mutation({
   args: {
     roomId: v.id("rooms"),
@@ -136,5 +166,63 @@ export const syncByRoom = mutation({
         await logEvent(task.taskId, "created", `Created task "${task.title}".`)
       }
     }
+  },
+})
+
+export const createQuickTask = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    userId: v.string(),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const trimmedTitle = args.title.trim()
+    if (!trimmedTitle) {
+      throw new Error("Task title is required.")
+    }
+
+    const membership = await ctx.db
+      .query("roomMembers")
+      .withIndex("by_room_user", (query) =>
+        query.eq("roomId", args.roomId).eq("userId", args.userId)
+      )
+      .first()
+
+    if (!membership || membership.status !== "active") {
+      throw new Error("Join the room before creating tasks.")
+    }
+
+    const latestTask = await ctx.db
+      .query("roomTasks")
+      .withIndex("by_room_order", (query) => query.eq("roomId", args.roomId))
+      .order("desc")
+      .first()
+    const order = latestTask ? latestTask.order + 1 : 0
+    const now = Date.now()
+    const taskId = `quick-${now}-${Math.random().toString(36).slice(2, 8)}`
+
+    await ctx.db.insert("roomTasks", {
+      roomId: args.roomId,
+      taskId,
+      title: trimmedTitle,
+      note: "",
+      assignee: "",
+      priority: "medium",
+      status: "todo",
+      order,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await ctx.db.insert("roomTaskEvents", {
+      roomId: args.roomId,
+      taskId,
+      actorUserId: args.userId,
+      type: "created",
+      message: `Created task "${trimmedTitle}".`,
+      createdAt: now,
+    })
+
+    return { taskId }
   },
 })

@@ -5,8 +5,10 @@ import { useMutation, useQuery } from "convex/react"
 import {
   Code2,
   Cpu,
+  Ellipsis,
   Pin,
   Plus,
+  LogOut,
   Rocket,
   Sparkles,
   type LucideIcon,
@@ -26,6 +28,12 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer"
 import { Input } from "@/components/ui/input"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -267,6 +275,13 @@ export function RoomsGrid() {
               </p>
               <h3 className="text-xl font-semibold">{room.name}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{room.description}</p>
+              <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                </span>
+                {Math.max(1, Math.min(room.membersCount, 4))} members active now
+              </div>
               <div className="mt-6 flex items-center justify-between">
                 <div className="flex items-center -space-x-2">
                   <div className="flex size-7 items-center justify-center rounded-full border border-cyan-500/20 bg-cyan-200/80 text-xs font-medium text-cyan-900">
@@ -280,30 +295,16 @@ export function RoomsGrid() {
                   {room.membersCount}/{room.membersMax} Members
                 </span>
               </div>
-              <div className="mt-4 flex items-center gap-2">
+              <div className="mt-4 flex items-center justify-between gap-2">
                 {isJoined ? (
                   <div className="flex items-center gap-2">
-                    <Badge className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                      Joined
-                    </Badge>
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
+                      className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
                       onClick={() => router.push(`/dashboard/rooms/${room._id}`)}
                     >
                       Enter Room
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="border-red-500/30 text-red-700 hover:bg-red-500/10 dark:text-red-300"
-                      onClick={() => {
-                        void leaveRoom(room._id)
-                      }}
-                    >
-                      Leave
                     </Button>
                   </div>
                 ) : (room.access ?? "public") === "public" ? (
@@ -322,21 +323,38 @@ export function RoomsGrid() {
                       : "Private"}
                   </Badge>
                 )}
-                {(room.access ?? "public") === "public" && room.joinCode ? (
-                  <span className="text-xs text-muted-foreground">
-                    Code: {room.joinCode}
-                  </span>
-                ) : null}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className={isPinned ? "text-cyan-700 dark:text-cyan-300" : ""}
-                  onClick={() => togglePin(room._id)}
-                >
-                  <Pin className="size-4" />
-                  {isPinned ? "Pinned" : "Pin"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {(room.access ?? "public") === "public" && room.joinCode ? (
+                    <span className="text-xs text-muted-foreground">
+                      Code: {room.joinCode}
+                    </span>
+                  ) : null}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" size="icon" variant="ghost" className="size-8">
+                        <Ellipsis className="size-4" />
+                        <span className="sr-only">More room actions</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => togglePin(room._id)}>
+                        <Pin className="size-4" />
+                        {isPinned ? "Unpin room" : "Pin room"}
+                      </DropdownMenuItem>
+                      {isJoined ? (
+                        <DropdownMenuItem
+                          className="text-red-700 focus:text-red-700 dark:text-red-300 dark:focus:text-red-300"
+                          onClick={() => {
+                            void leaveRoom(room._id)
+                          }}
+                        >
+                          <LogOut className="size-4" />
+                          Leave room
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             </article>
           )
@@ -344,7 +362,7 @@ export function RoomsGrid() {
 
         <button
           type="button"
-          className="group rounded-2xl border border-dashed border-cyan-500/35 bg-cyan-500/5 p-5 text-left transition-colors hover:bg-cyan-500/10"
+          className="group flex min-h-64 flex-col justify-center rounded-2xl border-2 border-dashed border-cyan-500/35 bg-cyan-500/5 p-5 text-left transition-colors hover:bg-cyan-500/10"
           onClick={() => setIsDrawerOpen(true)}
         >
           <div className="mb-5 flex items-start justify-between">

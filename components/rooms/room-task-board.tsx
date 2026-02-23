@@ -26,12 +26,17 @@ import { useMutation, useQuery } from "convex/react"
 import {
   ChevronDown,
   ChevronUp,
+  Crosshair,
+  Paperclip,
   GripVertical,
   Info,
   Link2,
+  MessageSquare,
   MoreHorizontal,
   PauseCircle,
+  Pencil,
   Plus,
+  Smile,
   Search,
   Send,
   SlidersHorizontal,
@@ -72,6 +77,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
   TooltipContent,
@@ -209,6 +222,13 @@ function dueStateClass(dueAt?: number) {
   return "text-muted-foreground"
 }
 
+function statusLabel(status: TaskStatus) {
+  if (status === "working") return "In Progress"
+  if (status === "blocked") return "Blocked"
+  if (status === "completed") return "Completed"
+  return "To Do"
+}
+
 function isTaskDueToday(dueAt: number) {
   const now = new Date()
   const due = new Date(dueAt)
@@ -285,7 +305,7 @@ function BaseTaskCard({
   onEdit,
   onStartFocus,
   onDiscuss,
-  dragHandle,
+  dragBindings,
   isDraggable = false,
 }: {
   task: RoomTask
@@ -293,7 +313,7 @@ function BaseTaskCard({
   onEdit: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
-  dragHandle?: React.HTMLAttributes<HTMLElement>
+  dragBindings?: React.HTMLAttributes<HTMLElement>
   isDraggable?: boolean
 }) {
   const hasActions = Boolean(onStartFocus || onDiscuss || onEdit)
@@ -301,22 +321,22 @@ function BaseTaskCard({
   return (
     <article
       className={cn(
-        "rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3",
+        "rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3.5",
         isDraggable && "cursor-grab active:cursor-grabbing",
         cardStatusClass(task.status)
       )}
+      {...(isDraggable ? dragBindings : undefined)}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-start gap-2">
           {isDraggable ? (
-            <GripVertical
-              className="mt-0.5 size-4 text-muted-foreground"
-              {...dragHandle}
-            />
+            <GripVertical className="mt-0.5 size-4 text-muted-foreground" />
           ) : (
             <PauseCircle className="mt-0.5 size-4 text-muted-foreground" />
           )}
-          <h4 className="line-clamp-2 text-sm font-semibold leading-5">{task.title}</h4>
+          <h4 className="min-w-0 break-words pr-1 text-sm font-semibold leading-5">
+            {task.title}
+          </h4>
         </div>
         <div className="flex items-center gap-1">
           <Badge className={cn("capitalize", priorityClass(task.priority))}>
@@ -339,30 +359,30 @@ function BaseTaskCard({
               <DropdownMenuContent align="end">
                 {onStartFocus ? (
                   <DropdownMenuItem
-                    onSelect={(event) => {
-                      event.preventDefault()
+                    onClick={() => {
                       onStartFocus({ id: task.id, title: task.title })
                     }}
                   >
+                    <Crosshair className="size-4" />
                     Focus Task
                   </DropdownMenuItem>
                 ) : null}
                 {onDiscuss ? (
                   <DropdownMenuItem
-                    onSelect={(event) => {
-                      event.preventDefault()
+                    onClick={() => {
                       onDiscuss(task)
                     }}
                   >
+                    <MessageSquare className="size-4" />
                     Discuss Task
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuItem
-                  onSelect={(event) => {
-                    event.preventDefault()
+                  onClick={() => {
                     onEdit(task)
                   }}
                 >
+                  <Pencil className="size-4" />
                   Edit Task
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -429,7 +449,7 @@ function SortableTaskCard(props: {
       <BaseTaskCard
         {...props}
         isDraggable
-        dragHandle={{ ...attributes, ...listeners }}
+        dragBindings={{ ...attributes, ...listeners }}
       />
     </div>
   )
@@ -450,7 +470,7 @@ function ColumnDropZone({
       ref={setNodeRef}
       className={cn(
         "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur transition-colors",
-        muted && "border-dashed bg-transparent/40 opacity-75",
+        muted && "border-dashed bg-transparent/10 opacity-70 shadow-none",
         isOver && "bg-[color:var(--nook-sidebar-input-bg)]"
       )}
     >
@@ -519,6 +539,7 @@ export function RoomTaskBoard({
   const [draftNote, setDraftNote] = React.useState("")
   const [draftAssigneeUserId, setDraftAssigneeUserId] = React.useState("none")
   const [draftPriority, setDraftPriority] = React.useState<TaskPriority>("medium")
+  const [draftStatus, setDraftStatus] = React.useState<TaskStatus>("todo")
   const [draftDueAt, setDraftDueAt] = React.useState("")
   const [isAddTaskOpen, setIsAddTaskOpen] = React.useState(false)
   const [isMemberProgressOpen, setIsMemberProgressOpen] = React.useState(false)
@@ -536,10 +557,16 @@ export function RoomTaskBoard({
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("todo")
   const [editDueAt, setEditDueAt] = React.useState("")
   const [threadTaskId, setThreadTaskId] = React.useState<string | null>(null)
+  const [threadTab, setThreadTab] = React.useState<"chat" | "files" | "history">("chat")
   const [threadMessage, setThreadMessage] = React.useState("")
-  const [threadFileName, setThreadFileName] = React.useState("")
   const [threadFileUrl, setThreadFileUrl] = React.useState("")
   const [threadUploadFile, setThreadUploadFile] = React.useState<File | null>(null)
+  const [isUploadingThreadFile, setIsUploadingThreadFile] = React.useState(false)
+  const uploadInFlightRef = React.useRef(false)
+  const [showFileLinkInput, setShowFileLinkInput] = React.useState(false)
+  const [messageReactions, setMessageReactions] = React.useState<
+    Record<string, string[]>
+  >({})
   const [threadError, setThreadError] = React.useState<string | null>(null)
 
   const thread = useQuery(
@@ -640,9 +667,18 @@ export function RoomTaskBoard({
 
   async function postThreadFile() {
     if (!sessionToken || !threadTaskId) return
-    const name = threadFileName.trim()
     const url = threadFileUrl.trim()
-    if (!name || !url) return
+    if (!url) return
+
+    const safeName = (() => {
+      try {
+        const parsed = new URL(url)
+        const tail = parsed.pathname.split("/").filter(Boolean).at(-1)
+        return tail || parsed.hostname
+      } catch {
+        return "Shared link"
+      }
+    })()
 
     setThreadError(null)
     try {
@@ -650,11 +686,11 @@ export function RoomTaskBoard({
         sessionToken,
         roomId,
         taskId: threadTaskId,
-        name,
+        name: safeName,
         url,
       })
-      setThreadFileName("")
       setThreadFileUrl("")
+      setShowFileLinkInput(false)
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : "Unable to share file.")
     }
@@ -662,7 +698,10 @@ export function RoomTaskBoard({
 
   async function uploadThreadFile() {
     if (!sessionToken || !threadTaskId || !threadUploadFile) return
+    if (uploadInFlightRef.current) return
 
+    uploadInFlightRef.current = true
+    setIsUploadingThreadFile(true)
     setThreadError(null)
     try {
       const { uploadUrl } = await generateThreadUploadUrl({
@@ -697,7 +736,23 @@ export function RoomTaskBoard({
       setThreadUploadFile(null)
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : "Unable to upload file.")
+    } finally {
+      uploadInFlightRef.current = false
+      setIsUploadingThreadFile(false)
     }
+  }
+
+  function toggleMessageReaction(messageId: string, emoji: string) {
+    setMessageReactions((prev) => {
+      const current = prev[messageId] ?? []
+      const exists = current.includes(emoji)
+      return {
+        ...prev,
+        [messageId]: exists
+          ? current.filter((value) => value !== emoji)
+          : [...current, emoji],
+      }
+    })
   }
 
   function addTask() {
@@ -716,14 +771,14 @@ export function RoomTaskBoard({
       assignee,
       assigneeUserId,
       priority: draftPriority,
-      status: "todo",
+      status: draftStatus,
       dueAt,
     }
 
     setBoard((prev) => {
       const next = {
         ...prev,
-        todo: [task, ...prev.todo],
+        [draftStatus]: [task, ...prev[draftStatus]],
       }
       persist(next)
       return next
@@ -732,8 +787,14 @@ export function RoomTaskBoard({
     setDraftNote("")
     setDraftAssigneeUserId("none")
     setDraftPriority("medium")
+    setDraftStatus("todo")
     setDraftDueAt("")
     setIsAddTaskOpen(false)
+  }
+
+  function openAddTask(status: TaskStatus = "todo") {
+    setDraftStatus(status)
+    setIsAddTaskOpen(true)
   }
 
   function openEdit(task: RoomTask) {
@@ -945,96 +1006,19 @@ export function RoomTaskBoard({
   return (
     <div className="space-y-5">
       <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
-        {!isAddTaskOpen ? (
-          <CardContent className="py-4">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-lg">Task Manager View</CardTitle>
             <Button
               type="button"
-              onClick={() => setIsAddTaskOpen(true)}
+              size="sm"
+              onClick={() => openAddTask("todo")}
               className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
             >
-              <Plus />
+              <Plus className="size-4" />
               Add Task
             </Button>
-          </CardContent>
-        ) : (
-          <>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-lg">Add Room Task</CardTitle>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsAddTaskOpen(false)}
-                >
-                  Collapse
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Input
-                value={draftTitle}
-                onChange={(event) => setDraftTitle(event.target.value)}
-                placeholder="Task title"
-                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-              />
-              <textarea
-                value={draftNote}
-                onChange={(event) => setDraftNote(event.target.value)}
-                placeholder="What needs to be done?"
-                className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
-              />
-              <div className="grid gap-3 md:grid-cols-4">
-                <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
-                  <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
-                    <SelectValue placeholder="Assign to" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Unassigned</SelectItem>
-                    {members.map((member) => (
-                      <SelectItem key={member.userId} value={member.userId}>
-                        {member.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={draftPriority}
-                  onValueChange={(value) => setDraftPriority(value as TaskPriority)}
-                >
-                  <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
-                    <SelectValue placeholder="Priority" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  type="datetime-local"
-                  value={draftDueAt}
-                  onChange={(event) => setDraftDueAt(event.target.value)}
-                  className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
-                />
-                <Button
-                  type="button"
-                  onClick={addTask}
-                  disabled={!canAddTask}
-                  className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
-                >
-                  <Plus />
-                  Add Task
-                </Button>
-              </div>
-            </CardContent>
-          </>
-        )}
-      </Card>
-
-      <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Task Manager View</CardTitle>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3 pt-0">
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1201,83 +1185,43 @@ export function RoomTaskBoard({
       </Card>
 
       {hasActiveFilters ? (
-        <div className="grid gap-4 lg:grid-cols-4">
-          {boardColumns.map((column) => {
-            const items = visibleBoard[column.id]
-            return (
-              <section
-                key={column.id}
-                className={cn(
-                  "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur",
-                  items.length === 0 && "border-dashed bg-transparent/35 opacity-75"
-                )}
-              >
-                <div className="mb-3 flex items-start justify-between">
-                  <div>
-                    <h3 className="text-base font-semibold">{column.label}</h3>
-                    <p className="text-xs text-muted-foreground">{column.subtitle}</p>
-                  </div>
-                  <Badge variant="secondary">{items.length}</Badge>
-                </div>
-                <div className="space-y-3">
-                  {items.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
-                      No matching tasks
-                    </p>
-                  ) : null}
-                  {items.map((task) => (
-                    <BaseTaskCard
-                      key={task.id}
-                      task={task}
-                      assigneeAvatarKey={
-                        task.assigneeUserId
-                          ? memberAvatarById.get(task.assigneeUserId)
-                          : undefined
-                      }
-                      onEdit={openEdit}
-                      onStartFocus={onStartFocusTask}
-                      onDiscuss={(selectedTask) => {
-                        setThreadTaskId(selectedTask.id)
-                        setThreadError(null)
-                      }}
-                    />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
-        </div>
-      ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-        >
-          <div className="grid gap-4 lg:grid-cols-4">
-            {boardColumns.map((column) => {
-              const items = board[column.id]
-              return (
-                <ColumnDropZone key={column.id} id={column.id} muted={items.length === 0}>
-                  <div className="mb-3 flex items-start justify-between">
-                    <div>
-                      <h3 className="text-base font-semibold">{column.label}</h3>
-                      <p className="text-xs text-muted-foreground">{column.subtitle}</p>
-                    </div>
-                    <Badge variant="secondary">{items.length}</Badge>
-                  </div>
-                  <SortableContext
-                    items={items.map((task) => task.id)}
-                    strategy={verticalListSortingStrategy}
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
+              {boardColumns.map((column) => {
+                const items = visibleBoard[column.id]
+                return (
+                  <section
+                    key={column.id}
+                    className={cn(
+                      "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur",
+                      items.length === 0 &&
+                        "border-dashed bg-transparent/10 opacity-70 shadow-none"
+                    )}
                   >
+                    <div className="mb-3 flex items-start justify-between">
+                      <div>
+                        <h3
+                          className={cn(
+                            "text-base font-semibold",
+                            items.length === 0 && "text-foreground/75"
+                          )}
+                        >
+                          {column.label}
+                        </h3>
+                        <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
+                          {column.subtitle}
+                        </p>
+                      </div>
+                      <Badge variant="secondary">{items.length}</Badge>
+                    </div>
                     <div className="space-y-3">
                       {items.length === 0 ? (
                         <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
-                          No tasks yet
+                          No matching tasks
                         </p>
                       ) : null}
                       {items.map((task) => (
-                        <SortableTaskCard
+                        <BaseTaskCard
                           key={task.id}
                           task={task}
                           assigneeAvatarKey={
@@ -1289,15 +1233,102 @@ export function RoomTaskBoard({
                           onStartFocus={onStartFocusTask}
                           onDiscuss={(selectedTask) => {
                             setThreadTaskId(selectedTask.id)
+                            setThreadTab("chat")
+                            setShowFileLinkInput(false)
                             setThreadError(null)
                           }}
                         />
                       ))}
                     </div>
-                  </SortableContext>
-                </ColumnDropZone>
-              )
-            })}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="mt-3 w-full justify-start text-muted-foreground hover:text-foreground"
+                      onClick={() => openAddTask(column.id)}
+                    >
+                      <Plus className="size-4" />
+                      Add task
+                    </Button>
+                  </section>
+                )
+              })}
+            </div>
+          </div>
+      ) : (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCorners}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+        >
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
+              {boardColumns.map((column) => {
+                const items = board[column.id]
+                return (
+                  <ColumnDropZone key={column.id} id={column.id} muted={items.length === 0}>
+                    <div className="mb-3 flex items-start justify-between">
+                      <div>
+                        <h3
+                          className={cn(
+                            "text-base font-semibold",
+                            items.length === 0 && "text-foreground/75"
+                          )}
+                        >
+                          {column.label}
+                        </h3>
+                        <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
+                          {column.subtitle}
+                        </p>
+                      </div>
+                      <Badge variant="secondary">{items.length}</Badge>
+                    </div>
+                    <SortableContext
+                      items={items.map((task) => task.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-3">
+                        {items.length === 0 ? (
+                          <p className="rounded-xl border border-dashed border-[color:var(--nook-sidebar-border)] px-3 py-4 text-center text-xs text-muted-foreground/80">
+                            No tasks yet
+                          </p>
+                        ) : null}
+                        {items.map((task) => (
+                          <SortableTaskCard
+                            key={task.id}
+                            task={task}
+                            assigneeAvatarKey={
+                              task.assigneeUserId
+                                ? memberAvatarById.get(task.assigneeUserId)
+                                : undefined
+                            }
+                            onEdit={openEdit}
+                            onStartFocus={onStartFocusTask}
+                            onDiscuss={(selectedTask) => {
+                              setThreadTaskId(selectedTask.id)
+                              setThreadTab("chat")
+                              setShowFileLinkInput(false)
+                              setThreadError(null)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="mt-3 w-full justify-start text-muted-foreground hover:text-foreground"
+                      onClick={() => openAddTask(column.id)}
+                    >
+                      <Plus className="size-4" />
+                      Add task
+                    </Button>
+                  </ColumnDropZone>
+                )
+              })}
+            </div>
           </div>
           <DragOverlay>
             {activeTask ? (
@@ -1418,6 +1449,93 @@ export function RoomTaskBoard({
         ) : null}
       </Card>
 
+      <Drawer open={isAddTaskOpen} onOpenChange={setIsAddTaskOpen}>
+        <DrawerContent className="border-[color:var(--nook-sidebar-border)]">
+          <DrawerHeader>
+            <DrawerTitle>Add Room Task</DrawerTitle>
+            <DrawerDescription>
+              Create a task directly in the selected column.
+            </DrawerDescription>
+          </DrawerHeader>
+          <div className="space-y-3 px-4 pb-2">
+            <Input
+              value={draftTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              placeholder="Task title"
+              className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+            />
+            <textarea
+              value={draftNote}
+              onChange={(event) => setDraftNote(event.target.value)}
+              placeholder="What needs to be done?"
+              className="min-h-20 w-full rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--nook-accent)]"
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                value={draftStatus}
+                onValueChange={(value) => setDraftStatus(value as TaskStatus)}
+              >
+                <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todo">To Do</SelectItem>
+                  <SelectItem value="working">In Progress</SelectItem>
+                  <SelectItem value="blocked">Blocked</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={draftAssigneeUserId} onValueChange={setDraftAssigneeUserId}>
+                <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                  <SelectValue placeholder="Assign to" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {members.map((member) => (
+                    <SelectItem key={member.userId} value={member.userId}>
+                      {member.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={draftPriority}
+                onValueChange={(value) => setDraftPriority(value as TaskPriority)}
+              >
+                <SelectTrigger className="w-full border-[color:var(--nook-sidebar-border)]">
+                  <SelectValue placeholder="Priority" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="datetime-local"
+                value={draftDueAt}
+                onChange={(event) => setDraftDueAt(event.target.value)}
+                className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)]"
+              />
+            </div>
+          </div>
+          <DrawerFooter>
+            <Button
+              type="button"
+              onClick={addTask}
+              disabled={!canAddTask}
+              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
+            >
+              <Plus className="size-4" />
+              Add Task
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setIsAddTaskOpen(false)}>
+              Cancel
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+
       <Drawer
         open={Boolean(editingTask)}
         onOpenChange={(open) => {
@@ -1504,7 +1622,7 @@ export function RoomTaskBoard({
         </DrawerContent>
       </Drawer>
 
-      <Drawer
+      <Sheet
         open={Boolean(threadTaskId)}
         onOpenChange={(open) => {
           if (!open) {
@@ -1513,17 +1631,44 @@ export function RoomTaskBoard({
           }
         }}
       >
-        <DrawerContent className="max-h-[90vh]">
-          <DrawerHeader>
-            <DrawerTitle>Task Discussion</DrawerTitle>
-            <DrawerDescription>
-              {threadTask ? `${threadTask.title}` : "Discuss this task and share files."}
-            </DrawerDescription>
-          </DrawerHeader>
-          <div className="space-y-4 overflow-y-auto px-4 pb-2">
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Chat</p>
-              <div className="max-h-60 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+        <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-lg">
+          <SheetHeader className="border-b border-[color:var(--nook-sidebar-border)] pb-3">
+            <div className="pr-8">
+              <SheetTitle>Task Discussion</SheetTitle>
+              <SheetDescription
+                className="mt-1 whitespace-normal break-words"
+                title={threadTask?.title}
+              >
+                {threadTask ? threadTask.title : "Discuss this task and share files."}
+              </SheetDescription>
+            </div>
+            {threadTask ? (
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">{statusLabel(threadTask.status)}</Badge>
+                <Badge className={cn("capitalize", priorityClass(threadTask.priority))}>
+                  {threadTask.priority}
+                </Badge>
+              </div>
+            ) : null}
+          </SheetHeader>
+
+          <Tabs
+            value={threadTab}
+            onValueChange={(value) =>
+              setThreadTab(value as "chat" | "files" | "history")
+            }
+            className="flex min-h-0 flex-1"
+          >
+            <div className="border-b border-[color:var(--nook-sidebar-border)] px-4 pt-3">
+              <TabsList variant="line" className="w-full justify-start">
+                <TabsTrigger value="chat">Chat</TabsTrigger>
+                <TabsTrigger value="files">Files</TabsTrigger>
+                <TabsTrigger value="history">History</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col px-4 py-3">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
                 {thread === undefined ? (
                   <p className="text-xs text-muted-foreground">Loading thread...</p>
                 ) : thread.messages.length === 0 ? (
@@ -1531,52 +1676,99 @@ export function RoomTaskBoard({
                 ) : (
                   thread.messages.map((message) => {
                     const isMe = Boolean(user?.id && message.authorUserId === user.id)
+                    const reactions = messageReactions[message.id] ?? []
                     return (
-                      <article
+                      <div
                         key={message.id}
-                        className={cn(
-                          "rounded-md border px-3 py-2 text-sm",
-                          isMe
-                            ? "border-cyan-500/35 bg-cyan-500/10"
-                            : "border-[color:var(--nook-sidebar-border)] bg-background/70"
-                        )}
+                        className={cn("flex", isMe ? "justify-end" : "justify-start")}
                       >
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <div className="inline-flex items-center gap-2">
-                            <Avatar className="size-6 border border-cyan-500/25">
-                              <AvatarImage
-                                src={avatarSrcForKey(message.authorAvatarKey)}
-                                alt={message.authorName}
-                              />
-                              <AvatarFallback>
-                                {message.authorName
-                                  .split(" ")
-                                  .map((part) => part[0] ?? "")
-                                  .join("")
-                                  .slice(0, 2)
-                                  .toUpperCase()}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="text-xs font-medium">{message.authorName}</span>
+                        <article
+                          className={cn(
+                            "w-fit max-w-[90%] rounded-md border px-3 py-2 text-sm",
+                            isMe
+                              ? "border-cyan-500/40 bg-cyan-500/15"
+                              : "border-[color:var(--nook-sidebar-border)] bg-background/70"
+                          )}
+                        >
+                          <div className="mb-1 flex items-center justify-between gap-3">
+                            <span className="text-xs font-medium">
+                              {isMe ? "You" : message.authorName}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {new Date(message.createdAt).toLocaleTimeString()}
+                            </span>
                           </div>
-                          <span className="text-[11px] text-muted-foreground">
-                            {new Date(message.createdAt).toLocaleTimeString()}
-                          </span>
-                        </div>
-                        <p className="text-sm">{message.body}</p>
-                      </article>
+                          <p className="text-sm">{message.body}</p>
+                          <div className="mt-2 flex items-center gap-1">
+                            {["👍", "✅", "🔥"].map((emoji) => {
+                              const active = reactions.includes(emoji)
+                              return (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-xs transition-colors",
+                                    active
+                                      ? "border-cyan-500/40 bg-cyan-500/15"
+                                      : "border-[color:var(--nook-sidebar-border)] bg-background/60"
+                                  )}
+                                  onClick={() =>
+                                    toggleMessageReaction(message.id, emoji)
+                                  }
+                                >
+                                  {emoji}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </article>
+                      </div>
                     )
                   })
                 )}
               </div>
-              <div className="flex gap-2">
-                <Input
-                  value={threadMessage}
-                  onChange={(event) => setThreadMessage(event.target.value)}
-                  placeholder="Write a message about this task..."
-                />
+              <form
+                className="mt-3 flex gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void postThreadMessage()
+                }}
+              >
+                <div className="relative flex-1">
+                  <Input
+                    value={threadMessage}
+                    onChange={(event) => setThreadMessage(event.target.value)}
+                    placeholder="Write a message about this task..."
+                    className="pr-20"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && event.shiftKey) return
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        void postThreadMessage()
+                      }
+                    }}
+                  />
+                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      onClick={() => setThreadMessage((prev) => `${prev}😊`)}
+                      aria-label="Add emoji"
+                    >
+                      <Smile className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      onClick={() => setThreadTab("files")}
+                      aria-label="Open attachments"
+                    >
+                      <Paperclip className="size-4" />
+                    </button>
+                  </div>
+                </div>
                 <Button
-                  type="button"
+                  type="submit"
                   onClick={() => {
                     void postThreadMessage()
                   }}
@@ -1585,12 +1777,11 @@ export function RoomTaskBoard({
                   <Send className="size-4" />
                   Send
                 </Button>
-              </div>
-            </div>
+              </form>
+            </TabsContent>
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Files</p>
-              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+            <TabsContent value="files" className="flex min-h-0 flex-1 flex-col px-4 py-3">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
                 {thread === undefined ? (
                   <p className="text-xs text-muted-foreground">Loading files...</p>
                 ) : thread.files.length === 0 ? (
@@ -1622,52 +1813,69 @@ export function RoomTaskBoard({
                   ))
                 )}
               </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input
-                  value={threadFileName}
-                  onChange={(event) => setThreadFileName(event.target.value)}
-                  placeholder="File name (e.g. API spec)"
-                />
-                <Input
-                  value={threadFileUrl}
-                  onChange={(event) => setThreadFileUrl(event.target.value)}
-                  placeholder="https://..."
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    void postThreadFile()
-                  }}
-                >
-                  <Link2 className="size-4" />
-                  Share File Link
-                </Button>
-                <Input
-                  type="file"
-                  onChange={(event) =>
-                    setThreadUploadFile(event.target.files?.[0] ?? null)
-                  }
-                  className="max-w-xs"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!threadUploadFile}
-                  onClick={() => {
-                    void uploadThreadFile()
-                  }}
-                >
-                  Upload File
-                </Button>
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Task History</p>
-              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
+              <div
+                className="mt-3 rounded-lg border border-dashed border-[color:var(--nook-sidebar-border)] bg-background/40 p-4 text-center"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  if (isUploadingThreadFile) return
+                  const file = event.dataTransfer.files?.[0]
+                  if (file) setThreadUploadFile(file)
+                }}
+              >
+                <p className="text-sm font-medium">Drop a file here</p>
+                <p className="mt-1 text-xs text-muted-foreground">or browse from your device</p>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <Input
+                    type="file"
+                    disabled={isUploadingThreadFile}
+                    onChange={(event) =>
+                      setThreadUploadFile(event.target.files?.[0] ?? null)
+                    }
+                    className="max-w-[240px]"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!threadUploadFile || isUploadingThreadFile}
+                    onClick={() => {
+                      void uploadThreadFile()
+                    }}
+                  >
+                    {isUploadingThreadFile ? "Uploading..." : "Upload"}
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  className="mt-3 text-xs text-cyan-700 underline dark:text-cyan-300"
+                  onClick={() => setShowFileLinkInput((prev) => !prev)}
+                >
+                  or paste a link
+                </button>
+                {showFileLinkInput ? (
+                  <div className="mt-2 flex gap-2">
+                    <Input
+                      value={threadFileUrl}
+                      onChange={(event) => setThreadFileUrl(event.target.value)}
+                      placeholder="https://..."
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        void postThreadFile()
+                      }}
+                    >
+                      Share
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="history" className="flex min-h-0 flex-1 flex-col px-4 py-3">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
                 {thread === undefined ? (
                   <p className="text-xs text-muted-foreground">Loading history...</p>
                 ) : thread.events.length === 0 ? (
@@ -1705,17 +1913,16 @@ export function RoomTaskBoard({
                   ))
                 )}
               </div>
-            </div>
+            </TabsContent>
+          </Tabs>
 
-            {threadError ? <p className="text-sm text-red-600">{threadError}</p> : null}
-          </div>
-          <DrawerFooter>
-            <Button variant="outline" onClick={() => setThreadTaskId(null)}>
-              Close
-            </Button>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+          {threadError ? (
+            <p className="border-t border-[color:var(--nook-sidebar-border)] px-4 py-2 text-sm text-red-600">
+              {threadError}
+            </p>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

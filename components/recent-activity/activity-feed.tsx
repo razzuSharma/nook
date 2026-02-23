@@ -1,11 +1,30 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import type { ActivityItem } from "@/components/recent-activity/data"
 
-export function ActivityFeed({ items }: { items: ActivityItem[] }) {
+export function ActivityFeed({
+  items,
+  suggestions = [
+    "Enter your first room ->",
+    "Invite a teammate ->",
+    "Try Deep Work Mode ->",
+  ],
+}: {
+  items: ActivityItem[]
+  suggestions?: string[]
+}) {
   if (items.length === 0) {
     return (
       <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 text-sm text-muted-foreground backdrop-blur">
-        No recent activity yet.
+        <p className="font-medium text-foreground">No recent activity yet.</p>
+        {suggestions.length > 0 ? (
+          <ul className="mt-3 space-y-2 text-sm">
+            {suggestions.map((suggestion) => (
+              <li key={suggestion} className="rounded-md bg-cyan-500/10 px-3 py-2">
+                {suggestion}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     )
   }
