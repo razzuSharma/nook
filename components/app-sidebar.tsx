@@ -91,7 +91,7 @@ type RoomListItem = {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  useSidebar()
+  const { state: sidebarState } = useSidebar()
   const router = useRouter()
   const { user, signOut } = useAuth()
   const pathname = usePathname()
@@ -146,6 +146,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return pathname === routePath
   }
   const isFocusModeActive = pathname.startsWith("/dashboard/focus")
+  const isIconCollapsed = sidebarState === "collapsed"
 
   return (
     <Sidebar
@@ -233,39 +234,57 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>MODES</SidebarGroupLabel>
-          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-2 shadow-sm">
+          <SidebarGroupContent
+            className={
+              isIconCollapsed
+                ? undefined
+                : "rounded-lg border border-cyan-500/15 bg-background/25 p-2 shadow-sm"
+            }
+          >
             <SidebarMenu>
               <SidebarMenuItem>
-                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5">
-                  <span className="inline-flex items-center gap-2 text-sm">
-                    <Timer className="size-4" />
-                    <span>Focus Mode</span>
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={isFocusModeActive}
+                {isIconCollapsed ? (
+                  <SidebarMenuButton
+                    isActive={isFocusModeActive}
                     onClick={() => {
                       router.push(isFocusModeActive ? "/dashboard" : "/dashboard/focus")
                     }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                      isFocusModeActive
-                        ? "bg-cyan-500"
-                        : "bg-slate-300 dark:bg-slate-700"
-                    }`}
                   >
-                    <span
-                      className={`inline-block size-4 transform rounded-full bg-white transition-transform ${
-                        isFocusModeActive ? "translate-x-4" : "translate-x-0.5"
+                    <Timer />
+                    <span>Focus Mode</span>
+                  </SidebarMenuButton>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5">
+                    <span className="inline-flex items-center gap-2 text-sm">
+                      <Timer className="size-4" />
+                      <span>Focus Mode</span>
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={isFocusModeActive}
+                      onClick={() => {
+                        router.push(isFocusModeActive ? "/dashboard" : "/dashboard/focus")
+                      }}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        isFocusModeActive
+                          ? "bg-cyan-500"
+                          : "bg-slate-300 dark:bg-slate-700"
                       }`}
-                    />
-                  </button>
-                </div>
+                    >
+                      <span
+                        className={`inline-block size-4 transform rounded-full bg-white transition-transform ${
+                          isFocusModeActive ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        {recentRooms.length > 0 ? (
+        {!isIconCollapsed && recentRooms.length > 0 ? (
           <SidebarGroup>
             <SidebarGroupLabel>RECENT ROOMS</SidebarGroupLabel>
             <SidebarGroupContent className="rounded-lg border border-cyan-500/10 bg-background/20 p-1 shadow-sm">
@@ -286,7 +305,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarGroupContent>
           </SidebarGroup>
         ) : null}
-        {pinnedRooms.length > 0 ? (
+        {!isIconCollapsed && pinnedRooms.length > 0 ? (
           <SidebarGroup>
             <SidebarGroupLabel>PINNED</SidebarGroupLabel>
             <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
@@ -332,7 +351,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <div className="mt-auto p-2 text-[11px] text-[color:var(--nook-sidebar-foreground-muted)]">
+        <div className="mt-auto p-2 text-[11px] text-[color:var(--nook-sidebar-foreground-muted)] group-data-[collapsible=icon]:hidden">
           Stay in flow mode.
         </div>
       </SidebarContent>
