@@ -1,113 +1,82 @@
-# **Nook**
+# Nook
 
-> **A calm, modern focus workspace for teams who build together.**
+Nook is a focused execution workspace for small teams.
 
-**Nook** is a Next.js app designed around focused collaboration. It combines shared rooms, activity tracking, saved task management, and a guided focus mode into one clean dashboard experience.
+It is built for one daily loop:
+1. Pick top tasks.
+2. Start focused work from the task.
+3. Resolve blockers in task discussion.
+4. Review what moved.
 
----
+## Core Features
 
-## **Preview**
+- Room-based collaboration (create, join by code, invite members).
+- Task board per room with drag-and-drop workflow:
+  - `To Do`, `In Progress`, `Blocked`, `Completed`
+  - filters, sorting, due presets, effort, assignee.
+- Task discussion panel:
+  - chat, file sharing, history, message input with Enter.
+- Focus mode:
+  - timer sessions, intention/reflection, room presence.
+- Dashboard execution layer:
+  - Today Plan (top assigned tasks), focus goal, room/activity overview.
+- Profile and productivity:
+  - status, availability, contribution/activity stats.
 
-`public/readme-preview.png`
+## Main Routes
 
----
+- `/` Welcome
+- `/sign-in`, `/sign-up`, `/verify-email`
+- `/dashboard` Home dashboard
+- `/dashboard/rooms/[roomId]` Room overview
+- `/dashboard/rooms/[roomId]/tasks` Room task board
+- `/dashboard/focus` Focus mode
+- `/dashboard/profile` Profile
+- `/dashboard/progress` Progress
 
-## **What This App Is About**
+## Tech Stack
 
-Nook helps individuals and teams stay in flow by giving them a single place to:
+- Next.js 16 (App Router), React 19, TypeScript
+- Tailwind CSS 4 + shadcn/ui + Radix
+- Convex (data, auth, realtime)
+- dnd-kit (kanban drag-and-drop)
 
-- **Enter a focused workspace** from a welcoming landing screen
-- **Manage collaboration rooms** and view active team spaces
-- **Track recent activity** across work sessions
-- **Organize saved tasks** in a board workflow
-- **Run guided focus sessions** (intention -> timer -> reflection)
+## Quick Start
 
----
-
-## **Core Screens**
-
-- `/` - Welcome / entry screen
-- `/sign-in` - Email/password sign-in
-- `/sign-up` - Email/password sign-up
-- `/verify-email` - Email verification callback
-- `/dashboard` - Main collaboration dashboard (rooms + metrics + activity)
-- `/dashboard/recent-activity` - Team activity timeline
-- `/dashboard/saved-tasks` - Saved tasks board
-- `/dashboard/focus` - Focus mode session flow
-
----
-
-## **Tech Stack**
-
-- **Next.js 16** (App Router)
-- **React 19**
-- **TypeScript**
-- **Tailwind CSS 4**
-- **shadcn/ui + Radix UI**
-- **dnd-kit** (task interactions)
-
----
-
-## **Getting Started**
-
-### **1. Install dependencies**
+1. Install dependencies
 
 ```bash
 npm install
 ```
 
-### **2. Run development server**
+2. Configure environment (`.env.local`)
 
 ```bash
-npm run dev
+NEXT_PUBLIC_CONVEX_URL=your_convex_deployment_url
+NEXT_PUBLIC_CONVEX_SITE_URL=http://localhost:3000
 ```
 
-Open: `http://localhost:3000`
-
-### **Auth + Email verification env (optional email sending)**
-
-Add these for real email delivery via Resend:
+Optional email delivery for verification/invites:
 
 ```bash
 RESEND_API_KEY=...
 RESEND_FROM_EMAIL=Nook <no-reply@yourdomain.com>
 ```
 
-Without these vars, verification links are still generated and shown in UI/dev logs.
-
-### **3. Production build**
+3. Run app
 
 ```bash
-npm run build
-npm run start
+npm run dev
 ```
 
-### **4. Lint**
+4. Run lint
 
 ```bash
 npm run lint
 ```
 
----
+## Product Direction
 
-## **Project Structure**
+The focused product plan and roadmap are documented in:
 
-```text
-app/
-  page.tsx                     # Welcome screen
-  dashboard/
-    page.tsx                   # Main dashboard
-    recent-activity/page.tsx   # Activity timeline
-    saved-tasks/page.tsx       # Task board
-    focus/page.tsx             # Focus mode
-components/
-  ...                          # Reusable UI + feature components
-public/
-  ...                          # Static assets and README preview image
-```
-
----
-
-## **Notes**
-
-Auth now persists users/sessions in Convex. Some activity and analytics views still use demo/mock content.
+- `docs/execution-wedge-plan.md`
