@@ -40,6 +40,8 @@ export function NavUser({
     email: string
     avatar: string
     avatarKey?: string
+    status?: "available" | "busy" | "deep_work" | "offline"
+    roleTitle?: string
   }
   onLogout?: () => void
 }) {
@@ -50,6 +52,22 @@ export function NavUser({
     .join("")
     .slice(0, 2)
     .toUpperCase()
+  const statusClass =
+    user.status === "busy"
+      ? "bg-amber-500"
+      : user.status === "deep_work"
+        ? "bg-rose-500"
+        : user.status === "offline"
+          ? "bg-slate-400"
+          : "bg-emerald-500"
+  const statusLabel =
+    user.status === "deep_work"
+      ? "Deep Work"
+      : user.status === "busy"
+        ? "Busy"
+        : user.status === "offline"
+          ? "Offline"
+          : "Available"
 
   return (
     <SidebarMenu>
@@ -60,14 +78,19 @@ export function NavUser({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <Avatar className="h-8 w-8 rounded-lg grayscale">
-                <AvatarImage src={user.avatar || avatarSrcForKey(user.avatarKey)} alt={user.name} />
-                <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-              </Avatar>
+              <div className="relative">
+                <Avatar className="h-8 w-8 rounded-lg grayscale">
+                  <AvatarImage src={user.avatar || avatarSrcForKey(user.avatarKey)} alt={user.name} />
+                  <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
+                </Avatar>
+                <span
+                  className={`absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border border-sidebar ${statusClass}`}
+                />
+              </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{user.name}</span>
                 <span className="text-muted-foreground truncate text-xs">
-                  {user.email}
+                  {user.roleTitle || user.email}
                 </span>
               </div>
               <EllipsisVertical className="ml-auto size-4" />
@@ -81,17 +104,25 @@ export function NavUser({
           >
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarImage
-                    src={user.avatar || avatarSrcForKey(user.avatarKey)}
-                    alt={user.name}
+                <div className="relative">
+                  <Avatar className="h-8 w-8 rounded-lg">
+                    <AvatarImage
+                      src={user.avatar || avatarSrcForKey(user.avatarKey)}
+                      alt={user.name}
+                    />
+                    <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
+                  </Avatar>
+                  <span
+                    className={`absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border border-background ${statusClass}`}
                   />
-                  <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-                </Avatar>
+                </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="text-muted-foreground truncate text-xs">
                     {user.email}
+                  </span>
+                  <span className="text-muted-foreground truncate text-[11px]">
+                    {statusLabel}
                   </span>
                 </div>
               </div>

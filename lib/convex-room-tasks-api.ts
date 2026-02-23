@@ -9,6 +9,20 @@ type RoomTasksApiShape = {
     { roomId: Id<"rooms"> },
     unknown
   >
+  listAssignedByUser: FunctionReference<
+    "query",
+    "public",
+    { userId: string },
+    Array<{
+      taskId: string
+      title: string
+      priority: "low" | "medium" | "high"
+      status: "todo" | "working" | "blocked" | "completed"
+      dueAt?: number
+      roomId: Id<"rooms">
+      roomName: string
+    }>
+  >
   syncByRoom: FunctionReference<
     "mutation",
     "public",
@@ -28,6 +42,16 @@ type RoomTasksApiShape = {
       }>
     },
     unknown
+  >
+  createQuickTask: FunctionReference<
+    "mutation",
+    "public",
+    {
+      roomId: Id<"rooms">
+      userId: string
+      title: string
+    },
+    { taskId: string }
   >
 }
 

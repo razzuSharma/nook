@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useMutation, useQuery } from "convex/react"
+import { useQuery } from "convex/react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -18,14 +18,6 @@ import { roomsApi } from "@/lib/convex-rooms-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/providers/auth-provider"
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer"
 
 import { NavUser } from "@/components/nav-user"
 import {
@@ -96,7 +88,6 @@ const data = {
 type RoomListItem = {
   _id: Id<"rooms">
   name: string
-  access?: "public" | "private" | "invite_only"
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -106,19 +97,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const userId = user?.id
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const joinedRoomIds = (useQuery(
-    roomsApi.joinedRoomIdsByUser,
-    userId ? { userId } : "skip"
-  ) ?? []) as Id<"rooms">[]
   const pinnedRoomIdsQuery = useQuery(
     roomsApi.pinnedRoomIdsByUser,
     userId ? { userId } : "skip"
   ) as Id<"rooms">[] | undefined
-  const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
-  const leaveRoomInDb = useMutation(roomsApi.leaveRoom)
-  const roomNames = React.useMemo(() => {
-    return (roomDocs ?? []).map((room) => room.name)
-  }, [roomDocs])
   const pinnedRooms = React.useMemo(
     () =>
       (roomDocs ?? []).filter((room) =>
@@ -127,37 +109,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     [pinnedRoomIdsQuery, roomDocs]
   )
 
-  const [joinCandidate, setJoinCandidate] = React.useState<{
-    id: Id<"rooms">
-    name: string
-  } | null>(null)
-
   async function openRoom(roomId: Id<"rooms">) {
     router.push(`/dashboard/rooms/${roomId}`)
-  }
-
-  async function joinRoom(roomId: Id<"rooms">) {
-    if (!userId) return
-    await joinRoomInDb({
-      roomId,
-      userId,
-    })
-    router.push(`/dashboard/rooms/${roomId}`)
-  }
-
-  async function leaveRoom(roomId: Id<"rooms">) {
-    if (!userId) return
-    await leaveRoomInDb({
-      roomId,
-      userId,
-    })
   }
 
   const navUser = {
     name: user?.name ?? "Nook User",
     email: user?.email ?? "Signed out",
-    avatar: avatarSrcForKey(user?.avatarKey),
+    avatar: user?.customAvatarUrl || avatarSrcForKey(user?.avatarKey),
     avatarKey: user?.avatarKey ?? "avatar-1",
+    status: user?.status ?? "available",
+    roleTitle: user?.roleTitle ?? "",
   }
 
   const isNavItemActive = (title: string, url: string) => {
@@ -182,6 +144,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     }
     return pathname === routePath
   }
+  const isFocusModeActive = pathname.startsWith("/dashboard/focus")
 
   return (
     <Sidebar
@@ -248,7 +211,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarSeparator />
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>GENERAL</SidebarGroupLabel>
+          <SidebarGroupLabel>QUICK LINKS</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {data.primaryNav.map((item) => (
@@ -269,36 +232,44 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>MODES</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-2 shadow-sm">
             <SidebarMenu>
-              {data.modes.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isNavItemActive(item.title, item.url)}
+              <SidebarMenuItem>
+                <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5">
+                  <span className="inline-flex items-center gap-2 text-sm">
+                    <Timer className="size-4" />
+                    <span>Focus Mode</span>
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isFocusModeActive}
+                    onClick={() => {
+                      router.push(isFocusModeActive ? "/dashboard" : "/dashboard/focus")
+                    }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                      isFocusModeActive
+                        ? "bg-cyan-500"
+                        : "bg-slate-300 dark:bg-slate-700"
+                    }`}
                   >
-                    <Link href={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+                    <span
+                      className={`inline-block size-4 transform rounded-full bg-white transition-transform ${
+                        isFocusModeActive ? "translate-x-4" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>PINNED</SidebarGroupLabel>
-          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
-            <SidebarMenu>
-              {pinnedRooms.length === 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton>
-                    <span>No pinned rooms</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : (
-                pinnedRooms.map((room) => (
+        {pinnedRooms.length > 0 ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>PINNED</SidebarGroupLabel>
+            <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
+              <SidebarMenu>
+                {pinnedRooms.map((room) => (
                   <SidebarMenuItem key={room._id}>
                     <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1">
                       <span className="inline-flex items-center gap-2 text-sm">
@@ -317,86 +288,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       </Button>
                     </div>
                   </SidebarMenuItem>
-                ))
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>MY ROOMS</SidebarGroupLabel>
-          <SidebarGroupContent className="rounded-lg border border-cyan-500/15 bg-background/25 p-1 shadow-sm">
-            <SidebarMenu>
-              {roomDocs?.map((room) => (
-                <SidebarMenuItem key={room._id}>
-                  <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1">
-                    <span className="inline-flex min-w-0 items-center gap-2 text-sm">
-                      <Users className="size-4 shrink-0" />
-                      <span className="truncate">{room.name}</span>
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {joinedRoomIds.includes(room._id) ? (
-                        <>
-                          <span className="text-[10px] text-emerald-600 dark:text-emerald-300">
-                            Joined
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 border-cyan-500/25 px-2 text-[11px]"
-                            onClick={() => {
-                              void openRoom(room._id)
-                            }}
-                          >
-                            Enter
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 border-red-500/25 px-2 text-[11px] text-red-700 hover:bg-red-500/10 dark:text-red-300"
-                            onClick={() => {
-                              void leaveRoom(room._id)
-                            }}
-                          >
-                            Leave
-                          </Button>
-                        </>
-                      ) : (room.access ?? "public") === "public" ? (
-                        <Button
-                          size="sm"
-                          className="h-7 bg-cyan-500 px-2 text-[11px] text-slate-950 hover:bg-cyan-400"
-                          onClick={() =>
-                            setJoinCandidate({
-                              id: room._id,
-                              name: room.name,
-                            })
-                          }
-                        >
-                          Join
-                        </Button>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground">
-                          {(room.access ?? "public") === "invite_only"
-                            ? "Invite only"
-                            : "Private"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </SidebarMenuItem>
-              ))}
-              {!roomDocs?.length
-                ? roomNames.map((name) => (
-                  <SidebarMenuItem key={name}>
-                    <SidebarMenuButton>
-                      <Users />
-                      <span>{name}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))
-                : null}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
         <SidebarGroup>
           <SidebarGroupLabel>TEAMS</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -428,38 +324,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           }}
         />
       </SidebarFooter>
-
-      <Drawer
-        open={Boolean(joinCandidate)}
-        onOpenChange={(open) => {
-          if (!open) setJoinCandidate(null)
-        }}
-      >
-        <DrawerContent className="border-cyan-500/20">
-          <DrawerHeader>
-            <DrawerTitle>Confirm Join</DrawerTitle>
-            <DrawerDescription>
-              Join <span className="font-medium">{joinCandidate?.name}</span> and
-              open the room?
-            </DrawerDescription>
-          </DrawerHeader>
-          <DrawerFooter>
-            <Button
-              onClick={() => {
-                if (!joinCandidate) return
-                void joinRoom(joinCandidate.id)
-                setJoinCandidate(null)
-              }}
-              className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
-            >
-              Confirm Join
-            </Button>
-            <Button variant="outline" onClick={() => setJoinCandidate(null)}>
-              Cancel
-            </Button>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
     </Sidebar>
   )
 }

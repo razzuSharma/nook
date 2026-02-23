@@ -5,6 +5,29 @@ export default defineSchema({
   users: defineTable({
     email: v.string(),
     name: v.string(),
+    username: v.optional(v.string()),
+    roleTitle: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    status: v.optional(
+      v.union(
+        v.literal("available"),
+        v.literal("busy"),
+        v.literal("deep_work"),
+        v.literal("offline")
+      )
+    ),
+    workingHours: v.optional(v.string()),
+    notificationEmail: v.optional(v.boolean()),
+    notificationInApp: v.optional(v.boolean()),
+    digestFrequency: v.optional(
+      v.union(v.literal("off"), v.literal("daily"), v.literal("weekly"))
+    ),
+    themePreference: v.optional(
+      v.union(v.literal("system"), v.literal("light"), v.literal("dark"))
+    ),
+    defaultRoomId: v.optional(v.id("rooms")),
+    customAvatarUrl: v.optional(v.string()),
     avatarKey: v.optional(v.string()),
     passwordHash: v.string(),
     passwordSalt: v.string(),

@@ -11,6 +11,18 @@ type AuthApiShape = {
       name: string
       email: string
       avatarKey: string
+      customAvatarUrl?: string
+      username: string
+      roleTitle: string
+      timezone: string
+      bio: string
+      status: "available" | "busy" | "deep_work" | "offline"
+      workingHours: string
+      notificationEmail: boolean
+      notificationInApp: boolean
+      digestFrequency: "off" | "daily" | "weekly"
+      themePreference: "system" | "light" | "dark"
+      defaultRoomId?: string
       emailVerified: boolean
     } | null
   >
@@ -40,6 +52,18 @@ type AuthApiShape = {
         name: string
         email: string
         avatarKey: string
+        customAvatarUrl?: string
+        username: string
+        roleTitle: string
+        timezone: string
+        bio: string
+        status: "available" | "busy" | "deep_work" | "offline"
+        workingHours: string
+        notificationEmail: boolean
+        notificationInApp: boolean
+        digestFrequency: "off" | "daily" | "weekly"
+        themePreference: "system" | "light" | "dark"
+        defaultRoomId?: string
         emailVerified: boolean
       }
     }
@@ -55,6 +79,18 @@ type AuthApiShape = {
         name: string
         email: string
         avatarKey: string
+        customAvatarUrl?: string
+        username: string
+        roleTitle: string
+        timezone: string
+        bio: string
+        status: "available" | "busy" | "deep_work" | "offline"
+        workingHours: string
+        notificationEmail: boolean
+        notificationInApp: boolean
+        digestFrequency: "off" | "daily" | "weekly"
+        themePreference: "system" | "light" | "dark"
+        defaultRoomId?: string
         emailVerified: boolean
       }
     }
@@ -62,12 +98,40 @@ type AuthApiShape = {
   updateProfile: FunctionReference<
     "mutation",
     "public",
-    { sessionToken: string; name: string; avatarKey: string },
+    {
+      sessionToken: string
+      name: string
+      avatarKey: string
+      customAvatarUrl?: string
+      username?: string
+      roleTitle?: string
+      timezone?: string
+      bio?: string
+      status?: "available" | "busy" | "deep_work" | "offline"
+      workingHours?: string
+      notificationEmail?: boolean
+      notificationInApp?: boolean
+      digestFrequency?: "off" | "daily" | "weekly"
+      themePreference?: "system" | "light" | "dark"
+      defaultRoomId?: string
+    },
     {
       id: string
       name: string
       email: string
       avatarKey: string
+      customAvatarUrl?: string
+      username: string
+      roleTitle: string
+      timezone: string
+      bio: string
+      status: "available" | "busy" | "deep_work" | "offline"
+      workingHours: string
+      notificationEmail: boolean
+      notificationInApp: boolean
+      digestFrequency: "off" | "daily" | "weekly"
+      themePreference: "system" | "light" | "dark"
+      defaultRoomId?: string
       emailVerified: boolean
     }
   >

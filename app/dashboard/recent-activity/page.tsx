@@ -30,7 +30,14 @@ export default function RecentActivityPage() {
                 Track what your team has been working on across rooms.
               </p>
             </div>
-            <ActivityFeed items={recentActivityItems} />
+            <ActivityFeed
+              items={recentActivityItems}
+              suggestions={[
+                "Enter your first room ->",
+                "Invite a teammate ->",
+                "Try Deep Work Mode ->",
+              ]}
+            />
           </div>
         </div>
       </SidebarInset>

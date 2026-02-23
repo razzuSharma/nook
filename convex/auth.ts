@@ -24,6 +24,9 @@ const AVATAR_KEYS = [
   "avatar-16",
 ] as const
 const DEFAULT_AVATAR_KEY = "avatar-1"
+const PROFILE_STATUSES = ["available", "busy", "deep_work", "offline"] as const
+const DIGEST_OPTIONS = ["off", "daily", "weekly"] as const
+const THEME_OPTIONS = ["system", "light", "dark"] as const
 const LEGACY_AVATAR_KEYS = new Set([
   "aurora",
   "atlas",
@@ -45,6 +48,49 @@ function normalizeAvatarKey(avatarKey: string | undefined) {
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase()
+}
+
+function normalizeProfileStatus(value: string | undefined) {
+  if (value && PROFILE_STATUSES.includes(value as (typeof PROFILE_STATUSES)[number])) {
+    return value as (typeof PROFILE_STATUSES)[number]
+  }
+  return "available"
+}
+
+function normalizeDigest(value: string | undefined) {
+  if (value && DIGEST_OPTIONS.includes(value as (typeof DIGEST_OPTIONS)[number])) {
+    return value as (typeof DIGEST_OPTIONS)[number]
+  }
+  return "daily"
+}
+
+function normalizeTheme(value: string | undefined) {
+  if (value && THEME_OPTIONS.includes(value as (typeof THEME_OPTIONS)[number])) {
+    return value as (typeof THEME_OPTIONS)[number]
+  }
+  return "system"
+}
+
+function toPublicUser(user: Doc<"users">) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    avatarKey: normalizeAvatarKey(user.avatarKey),
+    customAvatarUrl: user.customAvatarUrl,
+    username: user.username ?? "",
+    roleTitle: user.roleTitle ?? "",
+    timezone: user.timezone ?? "UTC",
+    bio: user.bio ?? "",
+    status: normalizeProfileStatus(user.status),
+    workingHours: user.workingHours ?? "",
+    notificationEmail: user.notificationEmail ?? true,
+    notificationInApp: user.notificationInApp ?? true,
+    digestFrequency: normalizeDigest(user.digestFrequency),
+    themePreference: normalizeTheme(user.themePreference),
+    defaultRoomId: user.defaultRoomId,
+    emailVerified: Boolean(user.emailVerifiedAt),
+  }
 }
 
 function toHex(bytes: Uint8Array) {
@@ -146,13 +192,7 @@ export const viewer = query({
     const user = await ctx.db.get(session.userId)
     if (!user) return null
 
-    return {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      avatarKey: normalizeAvatarKey(user.avatarKey),
-      emailVerified: Boolean(user.emailVerifiedAt),
-    }
+    return toPublicUser(user)
   },
 })
 
@@ -292,13 +332,10 @@ export const verifyEmail = mutation({
 
     return {
       sessionToken,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        avatarKey: normalizeAvatarKey(user.avatarKey),
-        emailVerified: true,
-      },
+      user: toPublicUser({
+        ...user,
+        emailVerifiedAt: now,
+      }),
     }
   },
 })
@@ -333,13 +370,7 @@ export const signIn = mutation({
     const sessionToken = await createSession(ctx, user._id)
     return {
       sessionToken,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        avatarKey: normalizeAvatarKey(user.avatarKey),
-        emailVerified: true,
-      },
+      user: toPublicUser(user),
     }
   },
 })
@@ -368,6 +399,29 @@ export const updateProfile = mutation({
     sessionToken: v.string(),
     name: v.string(),
     avatarKey: v.string(),
+    username: v.optional(v.string()),
+    roleTitle: v.optional(v.string()),
+    timezone: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    status: v.optional(
+      v.union(
+        v.literal("available"),
+        v.literal("busy"),
+        v.literal("deep_work"),
+        v.literal("offline")
+      )
+    ),
+    workingHours: v.optional(v.string()),
+    notificationEmail: v.optional(v.boolean()),
+    notificationInApp: v.optional(v.boolean()),
+    digestFrequency: v.optional(
+      v.union(v.literal("off"), v.literal("daily"), v.literal("weekly"))
+    ),
+    themePreference: v.optional(
+      v.union(v.literal("system"), v.literal("light"), v.literal("dark"))
+    ),
+    defaultRoomId: v.optional(v.id("rooms")),
+    customAvatarUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await requireUserBySessionToken(ctx, args.sessionToken)
@@ -380,15 +434,25 @@ export const updateProfile = mutation({
     await ctx.db.patch(user._id, {
       name: safeName,
       avatarKey: safeAvatarKey,
+      username: args.username?.trim() || undefined,
+      roleTitle: args.roleTitle?.trim() || undefined,
+      timezone: args.timezone?.trim() || "UTC",
+      bio: args.bio?.trim() || undefined,
+      status: normalizeProfileStatus(args.status),
+      workingHours: args.workingHours?.trim() || undefined,
+      notificationEmail: args.notificationEmail ?? true,
+      notificationInApp: args.notificationInApp ?? true,
+      digestFrequency: normalizeDigest(args.digestFrequency),
+      themePreference: normalizeTheme(args.themePreference),
+      defaultRoomId: args.defaultRoomId,
+      customAvatarUrl: args.customAvatarUrl?.trim() || undefined,
       updatedAt: Date.now(),
     })
 
-    return {
-      id: user._id,
-      name: safeName,
-      email: user.email,
-      avatarKey: safeAvatarKey,
-      emailVerified: Boolean(user.emailVerifiedAt),
+    const updated = await ctx.db.get(user._id)
+    if (!updated) {
+      throw new Error("Unable to load updated profile.")
     }
+    return toPublicUser(updated)
   },
 })

@@ -9,6 +9,18 @@ type AuthUser = {
   name: string
   email: string
   avatarKey: string
+  customAvatarUrl?: string
+  username: string
+  roleTitle: string
+  timezone: string
+  bio: string
+  status: "available" | "busy" | "deep_work" | "offline"
+  workingHours: string
+  notificationEmail: boolean
+  notificationInApp: boolean
+  digestFrequency: "off" | "daily" | "weekly"
+  themePreference: "system" | "light" | "dark"
+  defaultRoomId?: string
   emailVerified: boolean
 }
 
@@ -32,7 +44,22 @@ type AuthContextValue = {
   signUp: (input: SignUpInput) => Promise<{ verificationLink: string }>
   resendVerificationEmail: (email: string) => Promise<{ verificationLink: string }>
   verifyEmail: (token: string) => Promise<void>
-  updateProfile: (input: { name: string; avatarKey: string }) => Promise<void>
+  updateProfile: (input: {
+    name: string
+    avatarKey: string
+    customAvatarUrl?: string
+    username?: string
+    roleTitle?: string
+    timezone?: string
+    bio?: string
+    status?: "available" | "busy" | "deep_work" | "offline"
+    workingHours?: string
+    notificationEmail?: boolean
+    notificationInApp?: boolean
+    digestFrequency?: "off" | "daily" | "weekly"
+    themePreference?: "system" | "light" | "dark"
+    defaultRoomId?: string
+  }) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -94,6 +121,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       name: viewer.name,
       email: viewer.email,
       avatarKey: viewer.avatarKey,
+      customAvatarUrl: viewer.customAvatarUrl,
+      username: viewer.username,
+      roleTitle: viewer.roleTitle,
+      timezone: viewer.timezone,
+      bio: viewer.bio,
+      status: viewer.status,
+      workingHours: viewer.workingHours,
+      notificationEmail: viewer.notificationEmail,
+      notificationInApp: viewer.notificationInApp,
+      digestFrequency: viewer.digestFrequency,
+      themePreference: viewer.themePreference,
+      defaultRoomId: viewer.defaultRoomId,
       emailVerified: viewer.emailVerified,
     }
   }, [viewer])
@@ -159,7 +198,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [signOutMutation])
 
   const updateProfile = React.useCallback(
-    async ({ name, avatarKey }: { name: string; avatarKey: string }) => {
+    async ({
+      name,
+      avatarKey,
+      customAvatarUrl,
+      username,
+      roleTitle,
+      timezone,
+      bio,
+      status,
+      workingHours,
+      notificationEmail,
+      notificationInApp,
+      digestFrequency,
+      themePreference,
+      defaultRoomId,
+    }: {
+      name: string
+      avatarKey: string
+      customAvatarUrl?: string
+      username?: string
+      roleTitle?: string
+      timezone?: string
+      bio?: string
+      status?: "available" | "busy" | "deep_work" | "offline"
+      workingHours?: string
+      notificationEmail?: boolean
+      notificationInApp?: boolean
+      digestFrequency?: "off" | "daily" | "weekly"
+      themePreference?: "system" | "light" | "dark"
+      defaultRoomId?: string
+    }) => {
       if (!sessionToken) {
         throw new Error("Not signed in.")
       }
@@ -167,6 +236,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         sessionToken,
         name,
         avatarKey,
+        customAvatarUrl,
+        username,
+        roleTitle,
+        timezone,
+        bio,
+        status,
+        workingHours,
+        notificationEmail,
+        notificationInApp,
+        digestFrequency,
+        themePreference,
+        defaultRoomId,
       })
     },
     [sessionToken, updateProfileMutation]
