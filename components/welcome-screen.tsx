@@ -22,15 +22,25 @@ export function WelcomeScreen() {
           <img src="/nook-logo-light.png" alt="Nook logo" className="size-full scale-[1] translate-x-0 object-cover mt-0 dark:hidden block" />
         </div>
         <p className="text-sm font-medium tracking-wide text-muted-foreground">
-          Welcome to Nook
+          Built for daily execution
         </p>
         <h1 className="mt-2 text-balance text-3xl font-semibold tracking-tight md:text-5xl">
-          Enter your focus workspace
+          Run focused team work without app-switching
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-pretty text-sm text-muted-foreground md:text-base">
-          Rooms, tasks, and live collaboration in one calm dashboard. Start your
-          session when you are ready.
+          Nook helps small teams decide what to do now, focus together, and resolve blockers in the same place.
         </p>
+        <div className="mx-auto mt-5 grid max-w-2xl gap-2 text-left text-sm text-muted-foreground sm:grid-cols-3">
+          <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+            Plan today with clear top tasks
+          </p>
+          <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+            Start focus from the exact task card
+          </p>
+          <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+            Discuss blockers where work happens
+          </p>
+        </div>
 
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button
@@ -39,7 +49,7 @@ export function WelcomeScreen() {
             className="group bg-nook-accent text-slate-950 hover:bg-nook-accent-strong"
           >
             <Link href={user ? "/dashboard" : "/sign-in"}>
-              {user ? "Enter the new world of cafe and code." : "Sign in to enter Nook."}
+              {user ? "Open my execution workspace" : "Sign in and start today's plan"}
               <ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" />
             </Link>
           </Button>
