@@ -71,6 +71,12 @@ async function requireActiveMembership(
   return membership
 }
 
+function requireInviteManagerRole(role: "viewer" | "member" | "admin") {
+  if (role !== "admin") {
+    throw new Error("Only room admins can manage invites.")
+  }
+}
+
 export const listByRoom = query({
   args: {
     sessionToken: v.string(),
@@ -78,7 +84,8 @@ export const listByRoom = query({
   },
   handler: async (ctx, args) => {
     const user = await requireUserBySession(ctx, args.sessionToken)
-    await requireActiveMembership(ctx, args.roomId, user._id as string)
+    const membership = await requireActiveMembership(ctx, args.roomId, user._id as string)
+    requireInviteManagerRole(membership.role)
 
     return await ctx.db
       .query("roomInvites")
@@ -99,7 +106,8 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const inviter = await requireUserBySession(ctx, args.sessionToken)
-    await requireActiveMembership(ctx, args.roomId, inviter._id as string)
+    const membership = await requireActiveMembership(ctx, args.roomId, inviter._id as string)
+    requireInviteManagerRole(membership.role)
 
     const email = normalizeEmail(args.email)
     if (!email) {
@@ -162,7 +170,8 @@ export const revoke = mutation({
     if (!invite) {
       throw new Error("Invite not found.")
     }
-    await requireActiveMembership(ctx, invite.roomId, user._id as string)
+    const membership = await requireActiveMembership(ctx, invite.roomId, user._id as string)
+    requireInviteManagerRole(membership.role)
 
     await ctx.db.patch(invite._id, {
       status: "revoked",

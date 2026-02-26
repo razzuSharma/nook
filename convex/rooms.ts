@@ -49,6 +49,26 @@ async function requireUserBySession(
   return user
 }
 
+async function requireAdminMembership(
+  ctx: QueryCtx | MutationCtx,
+  roomId: Id<"rooms">,
+  userId: string
+) {
+  const membership = await ctx.db
+    .query("roomMembers")
+    .withIndex("by_room_user", (indexQuery) =>
+      indexQuery.eq("roomId", roomId).eq("userId", userId)
+    )
+    .first()
+
+  if (!membership || membership.status !== "active") {
+    throw new Error("Only joined room members can manage room settings.")
+  }
+  if (membership.role !== "admin") {
+    throw new Error("Only room admins can manage room settings.")
+  }
+}
+
 async function joinRoom(
   ctx: MutationCtx,
   roomId: Id<"rooms">,
@@ -199,6 +219,41 @@ export const create = mutation({
     })
 
     return roomId
+  },
+})
+
+export const updateSettings = mutation({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+    name: v.string(),
+    description: v.string(),
+    access: v.union(v.literal("public"), v.literal("private"), v.literal("invite_only")),
+    membersMax: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireAdminMembership(ctx, args.roomId, user._id as string)
+
+    const room = await ctx.db.get(args.roomId)
+    if (!room) {
+      throw new Error("Room not found.")
+    }
+
+    const safeMax = Math.min(Math.max(args.membersMax, 2), 30)
+    const normalizedAccess = args.access
+    const shouldHaveJoinCode = normalizedAccess === "public"
+
+    await ctx.db.patch(room._id, {
+      name: args.name.trim(),
+      description: args.description.trim(),
+      access: normalizedAccess,
+      membersMax: safeMax,
+      joinCode: shouldHaveJoinCode ? room.joinCode ?? generateJoinCode() : undefined,
+      membersCount: Math.min(room.membersCount, safeMax),
+    })
+
+    return { updated: true }
   },
 })
 

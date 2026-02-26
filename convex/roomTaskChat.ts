@@ -54,6 +54,14 @@ async function requireActiveRoomMembership(
   if (!membership || membership.status !== "active") {
     throw new Error("Only joined room members can access task chat.")
   }
+
+  return membership
+}
+
+function requireFileActionRole(role: "viewer" | "member" | "admin") {
+  if (role === "viewer") {
+    throw new Error("Viewers can view files, but cannot upload or share files.")
+  }
 }
 
 async function requireTaskInRoom(
@@ -226,7 +234,12 @@ export const shareFile = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUserBySession(ctx, args.sessionToken)
-    await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
+    const membership = await requireActiveRoomMembership(
+      ctx,
+      args.roomId,
+      user._id as string
+    )
+    requireFileActionRole(membership.role)
     await requireTaskInRoom(ctx, args.roomId, args.taskId)
 
     const name = args.name.trim()
@@ -266,7 +279,12 @@ export const generateUploadUrl = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUserBySession(ctx, args.sessionToken)
-    await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
+    const membership = await requireActiveRoomMembership(
+      ctx,
+      args.roomId,
+      user._id as string
+    )
+    requireFileActionRole(membership.role)
     await requireTaskInRoom(ctx, args.roomId, args.taskId)
 
     return {
@@ -287,7 +305,12 @@ export const shareUploadedFile = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUserBySession(ctx, args.sessionToken)
-    await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
+    const membership = await requireActiveRoomMembership(
+      ctx,
+      args.roomId,
+      user._id as string
+    )
+    requireFileActionRole(membership.role)
     await requireTaskInRoom(ctx, args.roomId, args.taskId)
 
     const name = args.name.trim()

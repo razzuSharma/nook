@@ -71,6 +71,7 @@ export default function RoomPage() {
   ) ?? []) as Id<"rooms">[]
   const createInvite = useMutation(roomInvitesApi.create)
   const revokeInvite = useMutation(roomInvitesApi.revoke)
+  const updateRoomSettings = useMutation(roomsApi.updateSettings)
   const [inviteEmail, setInviteEmail] = React.useState("")
   const [inviteRole, setInviteRole] = React.useState<"viewer" | "member" | "admin">(
     "member"
@@ -78,6 +79,14 @@ export default function RoomPage() {
   const [inviteLink, setInviteLink] = React.useState<string | null>(null)
   const [inviteError, setInviteError] = React.useState<string | null>(null)
   const [isInviteDrawerOpen, setIsInviteDrawerOpen] = React.useState(false)
+  const [settingsName, setSettingsName] = React.useState("")
+  const [settingsDescription, setSettingsDescription] = React.useState("")
+  const [settingsAccess, setSettingsAccess] = React.useState<"public" | "private" | "invite_only">(
+    "public"
+  )
+  const [settingsMembersMax, setSettingsMembersMax] = React.useState("8")
+  const [settingsMessage, setSettingsMessage] = React.useState<string | null>(null)
+  const [settingsError, setSettingsError] = React.useState<string | null>(null)
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
@@ -85,37 +94,57 @@ export default function RoomPage() {
   )
   const isJoined = room ? joinedRoomIds.includes(room._id) : false
 
-  const roomInvites = (useQuery(
-    roomInvitesApi.listByRoom,
-    sessionToken && room && isJoined
-      ? { sessionToken, roomId: room._id }
-      : "skip"
-  ) ?? []) as RoomInvite[]
-  const roomMembers = (useQuery(
+  const roomMembersQuery = useQuery(
     roomsApi.listMembersByRoom,
     sessionToken && room && isJoined
       ? { sessionToken, roomId: room._id }
       : "skip"
-  ) ?? []) as Array<{
+  ) as
+    | Array<{
     userId: string
     name: string
     role: "viewer" | "member" | "admin"
     email: string
     avatarKey: string
-  }>
+      }>
+    | undefined
+  const roomMembers = React.useMemo(() => roomMembersQuery ?? [], [roomMembersQuery])
+  const currentMembership = React.useMemo(
+    () => roomMembers.find((member) => member.userId === user?.id) ?? null,
+    [roomMembers, user?.id]
+  )
+  const currentRole = currentMembership?.role ?? null
+  const canManageInvites = currentRole === "admin"
+  const canManageRoomSettings = currentRole === "admin"
+  const roomInvites = (useQuery(
+    roomInvitesApi.listByRoom,
+    sessionToken && room && isJoined && canManageInvites
+      ? { sessionToken, roomId: room._id }
+      : "skip"
+  ) ?? []) as RoomInvite[]
+
+  React.useEffect(() => {
+    if (!room) return
+    setSettingsName(room.name)
+    setSettingsDescription(room.description)
+    setSettingsAccess(room.access ?? "public")
+    setSettingsMembersMax(String(room.membersMax))
+  }, [room])
 
   React.useEffect(() => {
     function onOpenRoomInvite() {
-      setIsInviteDrawerOpen(true)
+      if (canManageInvites) {
+        setIsInviteDrawerOpen(true)
+      }
     }
     window.addEventListener("nook:open-room-invite", onOpenRoomInvite)
     return () => {
       window.removeEventListener("nook:open-room-invite", onOpenRoomInvite)
     }
-  }, [])
+  }, [canManageInvites])
 
   const sendInvite = React.useCallback(async () => {
-    if (!room || !sessionToken) return
+    if (!room || !sessionToken || !canManageInvites) return
     setInviteError(null)
     setInviteLink(null)
     try {
@@ -131,7 +160,40 @@ export default function RoomPage() {
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Unable to send invite.")
     }
-  }, [room, sessionToken, createInvite, inviteEmail, inviteRole])
+  }, [room, sessionToken, canManageInvites, createInvite, inviteEmail, inviteRole])
+
+  const saveRoomSettings = React.useCallback(async () => {
+    if (!room || !sessionToken || !canManageRoomSettings) return
+    setSettingsError(null)
+    setSettingsMessage(null)
+    const membersMax = Number.parseInt(settingsMembersMax, 10)
+    if (Number.isNaN(membersMax) || membersMax < 2 || membersMax > 30) {
+      setSettingsError("Max members must be between 2 and 30.")
+      return
+    }
+    try {
+      await updateRoomSettings({
+        sessionToken,
+        roomId: room._id,
+        name: settingsName,
+        description: settingsDescription,
+        access: settingsAccess,
+        membersMax,
+      })
+      setSettingsMessage("Room settings updated.")
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Unable to update settings.")
+    }
+  }, [
+    room,
+    sessionToken,
+    canManageRoomSettings,
+    settingsMembersMax,
+    settingsName,
+    settingsDescription,
+    settingsAccess,
+    updateRoomSettings,
+  ])
 
   return (
     <SidebarProvider
@@ -146,8 +208,8 @@ export default function RoomPage() {
       <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
         <SiteHeader
           currentPage={room ? room.name : "Room"}
-          actionLabel="Invite"
-          actionEventName="nook:open-room-invite"
+          actionLabel={canManageInvites ? "Invite" : ""}
+          actionEventName={canManageInvites ? "nook:open-room-invite" : ""}
         />
         <div className="flex flex-1 flex-col px-4 py-5 md:px-6 md:py-6 lg:pr-20">
           <div className="mx-auto w-full max-w-6xl space-y-5">
@@ -180,6 +242,11 @@ export default function RoomPage() {
                     {room.name}
                   </h1>
                   <p className="mt-2 text-muted-foreground">{room.description}</p>
+                  {currentRole ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Your role: <span className="font-medium capitalize">{currentRole}</span>
+                    </p>
+                  ) : null}
                   <div className="mt-4 flex items-center gap-2">
                     <Link
                       href={`/dashboard/rooms/${room._id}`}
@@ -328,6 +395,73 @@ export default function RoomPage() {
                         </Button>
                       </CardContent>
                     </Card>
+                    <Card className="border-cyan-500/20 bg-background/70">
+                      <CardHeader>
+                        <CardTitle>Room Settings</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {!canManageRoomSettings ? (
+                          <p className="text-sm text-muted-foreground">
+                            Only room admins can update room settings.
+                          </p>
+                        ) : null}
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Input
+                            value={settingsName}
+                            onChange={(event) => setSettingsName(event.target.value)}
+                            placeholder="Room name"
+                            disabled={!canManageRoomSettings}
+                          />
+                          <Input
+                            value={settingsMembersMax}
+                            onChange={(event) => setSettingsMembersMax(event.target.value)}
+                            type="number"
+                            min={2}
+                            max={30}
+                            placeholder="Max members"
+                            disabled={!canManageRoomSettings}
+                          />
+                        </div>
+                        <Input
+                          value={settingsDescription}
+                          onChange={(event) => setSettingsDescription(event.target.value)}
+                          placeholder="Room description"
+                          disabled={!canManageRoomSettings}
+                        />
+                        <Select
+                          value={settingsAccess}
+                          onValueChange={(value) =>
+                            setSettingsAccess(value as "public" | "private" | "invite_only")
+                          }
+                          disabled={!canManageRoomSettings}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Access level" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="public">Public</SelectItem>
+                            <SelectItem value="private">Private</SelectItem>
+                            <SelectItem value="invite_only">Invite only</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {settingsError ? <p className="text-sm text-red-600">{settingsError}</p> : null}
+                        {settingsMessage ? (
+                          <p className="text-sm text-emerald-600 dark:text-emerald-300">
+                            {settingsMessage}
+                          </p>
+                        ) : null}
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            void saveRoomSettings()
+                          }}
+                          disabled={!canManageRoomSettings}
+                          className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                        >
+                          Save Settings
+                        </Button>
+                      </CardContent>
+                    </Card>
                   </>
                 ) : null}
               </>
@@ -345,16 +479,23 @@ export default function RoomPage() {
             </DrawerDescription>
           </DrawerHeader>
           <div className="space-y-4 px-4 pb-2">
+            {!canManageInvites ? (
+              <p className="text-sm text-muted-foreground">
+                Only room admins can manage invites.
+              </p>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-3">
               <Input
                 value={inviteEmail}
                 onChange={(event) => setInviteEmail(event.target.value)}
                 placeholder="teammate@example.com"
                 type="email"
+                disabled={!canManageInvites}
               />
               <Select
                 value={inviteRole}
                 onValueChange={(value) => setInviteRole(value as "viewer" | "member" | "admin")}
+                disabled={!canManageInvites}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Role" />
@@ -368,6 +509,7 @@ export default function RoomPage() {
               <Button
                 type="button"
                 className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                disabled={!canManageInvites}
                 onClick={() => {
                   void sendInvite()
                 }}
@@ -408,8 +550,9 @@ export default function RoomPage() {
                         type="button"
                         size="sm"
                         variant="outline"
+                        disabled={!canManageInvites}
                         onClick={() => {
-                          if (!sessionToken) return
+                          if (!sessionToken || !canManageInvites) return
                           void revokeInvite({
                             sessionToken,
                             inviteId: invite._id,

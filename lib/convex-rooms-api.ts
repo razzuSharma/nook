@@ -54,6 +54,19 @@ type RoomsApiShape = {
     },
     unknown
   >
+  updateSettings: FunctionReference<
+    "mutation",
+    "public",
+    {
+      sessionToken: string
+      roomId: Id<"rooms">
+      name: string
+      description: string
+      access: "public" | "private" | "invite_only"
+      membersMax: number
+    },
+    { updated: boolean }
+  >
   listMembersByRoom: FunctionReference<
     "query",
     "public",

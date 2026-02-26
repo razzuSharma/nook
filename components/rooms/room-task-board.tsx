@@ -398,7 +398,7 @@ function BaseTaskCard({
 }: {
   task: RoomTask
   assigneeAvatarKey?: string
-  onEdit: (task: RoomTask) => void
+  onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
   onStartTaskFocus?: (task: RoomTask) => void
@@ -471,14 +471,16 @@ function BaseTaskCard({
                     Discuss Task
                   </DropdownMenuItem>
                 ) : null}
-                <DropdownMenuItem
-                  onClick={() => {
-                    onEdit(task)
-                  }}
-                >
-                  <Pencil className="size-4" />
-                  Edit Task
-                </DropdownMenuItem>
+                {onEdit ? (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      onEdit(task)
+                    }}
+                  >
+                    <Pencil className="size-4" />
+                    Edit Task
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
@@ -556,7 +558,7 @@ function BaseTaskCard({
 function SortableTaskCard(props: {
   task: RoomTask
   assigneeAvatarKey?: string
-  onEdit: (task: RoomTask) => void
+  onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
   onStartTaskFocus?: (task: RoomTask) => void
@@ -650,6 +652,12 @@ export function RoomTaskBoard({
     () => new Map(members.map((member) => [member.userId, member.avatarKey])),
     [members]
   )
+  const currentMember = React.useMemo(
+    () => members.find((member) => member.userId === user?.id) ?? null,
+    [members, user?.id]
+  )
+  const canEditTasks = currentMember?.role === "member" || currentMember?.role === "admin"
+  const canManageFiles = canEditTasks
 
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
   const startRoomFocus = useMutation(roomFocusApi.start)
@@ -819,6 +827,10 @@ export function RoomTaskBoard({
   }
 
   async function postThreadFile() {
+    if (!canManageFiles) {
+      setThreadError("Your role can view files, but cannot share files.")
+      return
+    }
     if (!sessionToken || !threadTaskId) return
     const url = threadFileUrl.trim()
     if (!url) return
@@ -850,6 +862,10 @@ export function RoomTaskBoard({
   }
 
   async function uploadThreadFile() {
+    if (!canManageFiles) {
+      setThreadError("Your role can view files, but cannot upload files.")
+      return
+    }
     if (!sessionToken || !threadTaskId || !threadUploadFile) return
     if (uploadInFlightRef.current) return
 
@@ -909,6 +925,7 @@ export function RoomTaskBoard({
   }
 
   function addTask() {
+    if (!canEditTasks) return
     const title = draftTitle.trim()
     const note = draftNote.trim()
     if (!title || !note) return
@@ -950,6 +967,7 @@ export function RoomTaskBoard({
   }
 
   function openAddTask(status: TaskStatus = "todo") {
+    if (!canEditTasks) return
     setDraftStatus(status)
     setDraftDuePreset("none")
     setShowDraftSpecificDue(false)
@@ -957,6 +975,7 @@ export function RoomTaskBoard({
   }
 
   function openEdit(task: RoomTask) {
+    if (!canEditTasks) return
     setEditingTaskId(task.id)
     setEditTitle(task.title)
     setEditNote(task.note)
@@ -970,6 +989,7 @@ export function RoomTaskBoard({
   }
 
   function saveTaskEdit() {
+    if (!canEditTasks) return
     if (!editingTaskId) return
     const nextStatus = editStatus
     const assigneeUserId = editAssigneeUserId === "none" ? undefined : editAssigneeUserId
@@ -1005,6 +1025,7 @@ export function RoomTaskBoard({
   }
 
   function deleteTask(taskId: string) {
+    if (!canEditTasks) return
     setBoard((prev) => {
       const next = { ...prev }
       for (const status of statusOrder) {
@@ -1021,6 +1042,10 @@ export function RoomTaskBoard({
   }
 
   function onDragEnd(event: DragEndEvent) {
+    if (!canEditTasks) {
+      setActiveId(null)
+      return
+    }
     setActiveId(null)
     const { active, over } = event
     if (!over) return
@@ -1219,10 +1244,11 @@ export function RoomTaskBoard({
               type="button"
               size="sm"
               onClick={() => openAddTask("todo")}
+              disabled={!canEditTasks}
               className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
             >
               <Plus className="size-4" />
-              Add Task
+              {canEditTasks ? "Add Task" : "Read Only"}
             </Button>
           </div>
         </CardHeader>
@@ -1362,7 +1388,9 @@ export function RoomTaskBoard({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent sideOffset={6}>
-                  {hasActiveFilters
+                  {!canEditTasks
+                    ? "Viewer mode: task editing and drag-and-drop are disabled."
+                    : hasActiveFilters
                     ? "Filtered view: drag-and-drop is disabled."
                     : "Manual mode: drag-and-drop is enabled."}
                 </TooltipContent>
@@ -1446,7 +1474,7 @@ export function RoomTaskBoard({
         </CardContent>
       </Card>
 
-      {hasActiveFilters ? (
+      {hasActiveFilters || !canEditTasks ? (
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
               {boardColumns.map((column) => {
@@ -1492,7 +1520,7 @@ export function RoomTaskBoard({
                               ? memberAvatarById.get(task.assigneeUserId)
                               : undefined
                           }
-                          onEdit={openEdit}
+                          onEdit={canEditTasks ? openEdit : undefined}
                           onStartFocus={onStartFocusTask}
                           onDiscuss={(selectedTask) => {
                             setThreadTaskId(selectedTask.id)
@@ -1526,9 +1554,10 @@ export function RoomTaskBoard({
                           : "text-muted-foreground"
                       )}
                       onClick={() => openAddTask(column.id)}
+                      disabled={!canEditTasks}
                     >
                       <Plus className="size-4" />
-                      Add task
+                      {canEditTasks ? "Add task" : "View only"}
                     </Button>
                   </section>
                 )
@@ -1584,7 +1613,7 @@ export function RoomTaskBoard({
                                 ? memberAvatarById.get(task.assigneeUserId)
                                 : undefined
                             }
-                            onEdit={openEdit}
+                            onEdit={canEditTasks ? openEdit : undefined}
                             onStartFocus={onStartFocusTask}
                             onDiscuss={(selectedTask) => {
                               setThreadTaskId(selectedTask.id)
@@ -1619,9 +1648,10 @@ export function RoomTaskBoard({
                           : "text-muted-foreground"
                       )}
                       onClick={() => openAddTask(column.id)}
+                      disabled={!canEditTasks}
                     >
                       <Plus className="size-4" />
-                      Add task
+                      {canEditTasks ? "Add task" : "View only"}
                     </Button>
                   </ColumnDropZone>
                 )
@@ -1872,7 +1902,7 @@ export function RoomTaskBoard({
             <Button
               type="button"
               onClick={addTask}
-              disabled={!canAddTask}
+              disabled={!canEditTasks || !canAddTask}
               className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)] disabled:opacity-50"
             >
               <Plus className="size-4" />
@@ -2014,12 +2044,13 @@ export function RoomTaskBoard({
           <DrawerFooter>
             <Button
               onClick={saveTaskEdit}
+              disabled={!canEditTasks}
               className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
             >
               Save Changes
             </Button>
             {editingTask ? (
-              <Button variant="outline" onClick={() => deleteTask(editingTask.id)}>
+              <Button variant="outline" onClick={() => deleteTask(editingTask.id)} disabled={!canEditTasks}>
                 <Trash2 />
                 Delete Task
               </Button>
@@ -2210,7 +2241,7 @@ export function RoomTaskBoard({
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   event.preventDefault()
-                  if (isUploadingThreadFile) return
+                  if (isUploadingThreadFile || !canManageFiles) return
                   const file = event.dataTransfer.files?.[0]
                   if (file) setThreadUploadFile(file)
                 }}
@@ -2220,7 +2251,7 @@ export function RoomTaskBoard({
                 <div className="mt-3 flex items-center justify-center gap-2">
                   <Input
                     type="file"
-                    disabled={isUploadingThreadFile}
+                    disabled={isUploadingThreadFile || !canManageFiles}
                     onChange={(event) =>
                       setThreadUploadFile(event.target.files?.[0] ?? null)
                     }
@@ -2229,7 +2260,7 @@ export function RoomTaskBoard({
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={!threadUploadFile || isUploadingThreadFile}
+                    disabled={!threadUploadFile || isUploadingThreadFile || !canManageFiles}
                     onClick={() => {
                       void uploadThreadFile()
                     }}
@@ -2240,6 +2271,7 @@ export function RoomTaskBoard({
                 <button
                   type="button"
                   className="mt-3 text-xs text-cyan-700 underline dark:text-cyan-300"
+                  disabled={!canManageFiles}
                   onClick={() => setShowFileLinkInput((prev) => !prev)}
                 >
                   or paste a link
@@ -2248,12 +2280,14 @@ export function RoomTaskBoard({
                   <div className="mt-2 flex gap-2">
                     <Input
                       value={threadFileUrl}
+                      disabled={!canManageFiles}
                       onChange={(event) => setThreadFileUrl(event.target.value)}
                       placeholder="https://..."
                     />
                     <Button
                       type="button"
                       variant="outline"
+                      disabled={!canManageFiles}
                       onClick={() => {
                         void postThreadFile()
                       }}

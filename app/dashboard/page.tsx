@@ -462,15 +462,21 @@ export default function Page() {
     event.preventDefault()
     const title = quickTask.trim()
     if (!title || !latestJoinedRoomId || !userId) return
-    await createQuickTask({
-      roomId: latestJoinedRoomId,
-      userId,
-      title,
-    })
-    setQuickTask("")
-    toast("Task added", {
-      description: "Added to your most recent active room.",
-    })
+    try {
+      await createQuickTask({
+        roomId: latestJoinedRoomId,
+        userId,
+        title,
+      })
+      setQuickTask("")
+      toast("Task added", {
+        description: "Added to your most recent active room.",
+      })
+    } catch (error) {
+      toast("Unable to add task", {
+        description: error instanceof Error ? error.message : "Permission denied.",
+      })
+    }
   }
 
   return (
