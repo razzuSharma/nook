@@ -733,11 +733,12 @@ export function RoomTaskBoard({
   )
 
   React.useEffect(() => {
-    const boardTasks = flattenBoard(board)
-    if (!tasksEqual(boardTasks, serverTasks)) {
-      setBoard(toBoardState(serverTasks))
-    }
-  }, [board, serverTasks])
+    setBoard((prev) => {
+      const boardTasks = flattenBoard(prev)
+      if (tasksEqual(boardTasks, serverTasks)) return prev
+      return toBoardState(serverTasks)
+    })
+  }, [serverTasks])
 
   function persist(next: TaskBoardState) {
     const payload = flattenBoard(next).map((task, index) => ({
