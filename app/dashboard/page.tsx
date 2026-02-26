@@ -32,6 +32,8 @@ import {
 } from "@/components/ui/dialog"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
+import { roomFocusApi } from "@/lib/convex-room-focus-api"
+import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import {
   SidebarInset,
   SidebarProvider,
@@ -42,31 +44,11 @@ import { toast } from "sonner"
 const DASHBOARD_ONBOARDING_KEY = "nook.dashboard.onboarding.v1"
 const APP_BOOT_TIME = Date.now()
 
-const metrics = [
-  {
-    label: "FOCUSED TIME",
-    value: "4.2h",
-    trend: "↑ 12% vs last week",
-    points: [26, 32, 30, 35, 38, 44, 42],
-  },
-  {
-    label: "TEAM VELOCITY",
-    value: "92%",
-    trend: "↑ 8% vs last week",
-    points: [58, 62, 65, 68, 74, 88, 92],
-  },
-  {
-    label: "ACTIVE COLLABORATORS",
-    value: "14",
-    trend: "↑ 2 active now",
-    points: [6, 8, 7, 10, 12, 13, 14],
-  },
-]
-
 type RoomListItem = {
   _id: Id<"rooms">
   name: string
   createdAt: number
+  membersCount: number
 }
 
 type AssignedRoomTask = {
@@ -76,6 +58,28 @@ type AssignedRoomTask = {
   status: "todo" | "working" | "blocked" | "completed"
   dueAt?: number
   roomName: string
+}
+
+type RoomTaskMetricDoc = {
+  taskId: string
+  status: "todo" | "working" | "blocked" | "completed"
+  dueAt?: number
+  createdAt: number
+  updatedAt: number
+  completedAt?: number
+  assigneeUserId?: string
+}
+
+type FocusSessionDoc = {
+  durationMinutes: number
+  createdAt: number
+  completedAt: string
+}
+
+type FocusPresenceDoc = {
+  userId: string
+  status: "idle" | "focusing" | "break" | "done"
+  endsAt: number | null
 }
 
 function formatPlanDue(dueAt?: number) {
@@ -109,8 +113,54 @@ function Sparkline({ points }: { points: number[] }) {
   )
 }
 
+function formatDelta(current: number, previous: number, suffix = "") {
+  if (previous <= 0 && current <= 0) return `No change${suffix}`
+  if (previous <= 0) return `Up ${current}${suffix}`
+  const delta = Math.round(((current - previous) / previous) * 100)
+  if (delta === 0) return `Flat${suffix}`
+  return `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta)}%${suffix}`
+}
+
+function startOfDay(timestamp: number) {
+  const date = new Date(timestamp)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+function dayIndex(windowStart: number, timestamp: number) {
+  return Math.floor((timestamp - windowStart) / (24 * 60 * 60 * 1000))
+}
+
+function RoomMetricsCollector({
+  roomId,
+  sessionToken,
+  onTasks,
+  onPresence,
+}: {
+  roomId: Id<"rooms">
+  sessionToken: string | null
+  onTasks: (roomId: string, tasks: RoomTaskMetricDoc[]) => void
+  onPresence: (roomId: string, presence: FocusPresenceDoc[]) => void
+}) {
+  const tasks = useQuery(roomTasksApi.listByRoom, { roomId }) as RoomTaskMetricDoc[] | undefined
+  const presence = useQuery(
+    roomFocusApi.listPresence,
+    sessionToken ? { sessionToken, roomId } : "skip"
+  ) as FocusPresenceDoc[] | undefined
+
+  React.useEffect(() => {
+    if (tasks) onTasks(String(roomId), tasks)
+  }, [roomId, tasks, onTasks])
+
+  React.useEffect(() => {
+    if (presence) onPresence(String(roomId), presence)
+  }, [roomId, presence, onPresence])
+
+  return null
+}
+
 export default function Page() {
-  const { user } = useAuth()
+  const { user, sessionToken } = useAuth()
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there"
   const userId = user?.id
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
@@ -127,7 +177,18 @@ export default function Page() {
     roomTasksApi.listAssignedByUser,
     userId ? { userId } : "skip"
   ) as AssignedRoomTask[] | undefined
+  const focusSessions = useQuery(
+    focusSessionsApi.list,
+    sessionToken ? { sessionToken } : "skip"
+  ) as FocusSessionDoc[] | undefined
+  const [roomTasksByRoom, setRoomTasksByRoom] = React.useState<
+    Record<string, RoomTaskMetricDoc[]>
+  >({})
+  const [roomPresenceByRoom, setRoomPresenceByRoom] = React.useState<
+    Record<string, FocusPresenceDoc[]>
+  >({})
   const [quickTask, setQuickTask] = React.useState("")
+  const [nowTimestamp, setNowTimestamp] = React.useState(() => Date.now())
   const [focusGoalHours] = React.useState(6)
   const [onboardingOpen, setOnboardingOpen] = React.useState(false)
 
@@ -138,8 +199,229 @@ export default function Page() {
     return sortedByRecency.find((room) => joinedRoomIds.includes(room._id))?._id
   }, [roomDocs, joinedRoomIds])
 
-  const focusedHours = 4.2
+  const handleRoomTasks = React.useCallback((roomId: string, tasks: RoomTaskMetricDoc[]) => {
+    setRoomTasksByRoom((prev) => (prev[roomId] === tasks ? prev : { ...prev, [roomId]: tasks }))
+  }, [])
+  const handleRoomPresence = React.useCallback((roomId: string, presence: FocusPresenceDoc[]) => {
+    setRoomPresenceByRoom((prev) =>
+      prev[roomId] === presence ? prev : { ...prev, [roomId]: presence }
+    )
+  }, [])
+
+  React.useEffect(() => {
+    const active = new Set(joinedRoomIds.map((roomId) => String(roomId)))
+    setRoomTasksByRoom((prev) => {
+      const next = Object.fromEntries(
+        Object.entries(prev).filter(([roomId]) => active.has(roomId))
+      )
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+    setRoomPresenceByRoom((prev) => {
+      const next = Object.fromEntries(
+        Object.entries(prev).filter(([roomId]) => active.has(roomId))
+      )
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+  }, [joinedRoomIds])
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNowTimestamp(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const analytics = React.useMemo(() => {
+    const now = nowTimestamp
+    const todayStart = startOfDay(now)
+    const windowStart = todayStart - 6 * 24 * 60 * 60 * 1000
+    const prevWindowStart = windowStart - 7 * 24 * 60 * 60 * 1000
+
+    const focusDailyMinutes = Array.from({ length: 7 }, () => 0)
+    let focusMinutesToday = 0
+    let focusMinutes7d = 0
+    let focusMinutesPrev7d = 0
+
+    for (const session of focusSessions ?? []) {
+      const stamp = new Date(session.completedAt).getTime()
+      const timestamp = Number.isNaN(stamp) ? session.createdAt : stamp
+      if (timestamp >= todayStart && timestamp <= now) {
+        focusMinutesToday += session.durationMinutes
+      }
+      if (timestamp >= windowStart && timestamp <= now) {
+        const index = dayIndex(windowStart, timestamp)
+        if (index >= 0 && index < 7) {
+          focusDailyMinutes[index] += session.durationMinutes
+        }
+        focusMinutes7d += session.durationMinutes
+      } else if (timestamp >= prevWindowStart && timestamp < windowStart) {
+        focusMinutesPrev7d += session.durationMinutes
+      }
+    }
+
+    const allRoomTasks = Object.values(roomTasksByRoom).flat()
+    const velocityDailyCompleted = Array.from({ length: 7 }, () => 0)
+    let createdCurrent = 0
+    let createdPrevious = 0
+    let completedCurrent = 0
+    let completedPrevious = 0
+
+    for (const task of allRoomTasks) {
+      if (task.createdAt >= windowStart && task.createdAt <= now) {
+        createdCurrent += 1
+      } else if (task.createdAt >= prevWindowStart && task.createdAt < windowStart) {
+        createdPrevious += 1
+      }
+      if (!task.completedAt) continue
+      if (task.completedAt >= windowStart && task.completedAt <= now) {
+        completedCurrent += 1
+        const index = dayIndex(windowStart, task.completedAt)
+        if (index >= 0 && index < 7) velocityDailyCompleted[index] += 1
+      } else if (task.completedAt >= prevWindowStart && task.completedAt < windowStart) {
+        completedPrevious += 1
+      }
+    }
+
+    const velocityPercent = Math.round((completedCurrent / Math.max(1, createdCurrent)) * 100)
+    const velocityPrevPercent = Math.round(
+      (completedPrevious / Math.max(1, createdPrevious)) * 100
+    )
+
+    const collaboratorDailySets = Array.from({ length: 7 }, () => new Set<string>())
+    const activeCollaboratorsNowSet = new Set<string>()
+    const activeCollaboratorsPrevSet = new Set<string>()
+
+    for (const task of allRoomTasks) {
+      if (!task.assigneeUserId) continue
+      if (task.updatedAt >= now - 24 * 60 * 60 * 1000) {
+        activeCollaboratorsNowSet.add(String(task.assigneeUserId))
+      } else if (
+        task.updatedAt >= now - 2 * 24 * 60 * 60 * 1000 &&
+        task.updatedAt < now - 24 * 60 * 60 * 1000
+      ) {
+        activeCollaboratorsPrevSet.add(String(task.assigneeUserId))
+      }
+      if (task.updatedAt >= windowStart && task.updatedAt <= now) {
+        const index = dayIndex(windowStart, task.updatedAt)
+        if (index >= 0 && index < 7) {
+          collaboratorDailySets[index].add(String(task.assigneeUserId))
+        }
+      }
+    }
+
+    for (const presence of Object.values(roomPresenceByRoom).flat()) {
+      if (presence.status === "focusing" && (presence.endsAt ?? now) >= now) {
+        activeCollaboratorsNowSet.add(String(presence.userId))
+        collaboratorDailySets[6].add(String(presence.userId))
+      }
+    }
+
+    const activeCollaboratorsDaily = collaboratorDailySets.map((set) => set.size)
+
+    const totalTasks = allRoomTasks.length
+    const completedTasks = allRoomTasks.filter((task) => task.status === "completed").length
+    const openTasks = allRoomTasks.filter((task) => task.status !== "completed")
+    const blockedOpen = openTasks.filter((task) => task.status === "blocked").length
+    const overdueOpen = openTasks.filter((task) => Boolean(task.dueAt && task.dueAt < now)).length
+    const completionRatio = totalTasks > 0 ? completedTasks / totalTasks : 0
+    const blockedRatio = openTasks.length > 0 ? blockedOpen / openTasks.length : 0
+    const overdueRatio = openTasks.length > 0 ? overdueOpen / openTasks.length : 0
+    const focusCoverage = Math.min(1, focusMinutes7d / Math.max(120, joinedRoomIds.length * 180))
+    const prevFocusCoverage = Math.min(
+      1,
+      focusMinutesPrev7d / Math.max(120, joinedRoomIds.length * 180)
+    )
+    const roomHealthScore = Math.round(
+      45 * completionRatio +
+        30 * (1 - blockedRatio) +
+        20 * (1 - overdueRatio) +
+        5 * focusCoverage
+    )
+    const roomHealthPrevScore = Math.round(
+      45 * Math.max(0, completionRatio - completedCurrent / Math.max(1, totalTasks)) +
+        30 * (1 - blockedRatio) +
+        20 * (1 - overdueRatio) +
+        5 * prevFocusCoverage
+    )
+    const maxFocusDaily = Math.max(1, ...focusDailyMinutes)
+    const maxVelocityDaily = Math.max(1, ...velocityDailyCompleted)
+    const maxCollaboratorDaily = Math.max(1, ...activeCollaboratorsDaily)
+    const roomHealthDaily = Array.from({ length: 7 }, (_, index) =>
+      Math.round(
+        Math.min(
+          100,
+          35 * (velocityDailyCompleted[index] / maxVelocityDaily) +
+            25 * (1 - blockedRatio) +
+            20 * (1 - overdueRatio) +
+            10 * (focusDailyMinutes[index] / maxFocusDaily) +
+            10 * (activeCollaboratorsDaily[index] / maxCollaboratorDaily)
+        )
+      )
+    )
+
+    return {
+      roomCount: joinedRoomIds.length,
+      focusMinutesToday,
+      focusMinutes7d,
+      focusMinutesPrev7d,
+      focusDailyMinutes,
+      velocityPercent,
+      velocityPrevPercent,
+      velocityDailyCompleted,
+      activeCollaboratorsNow: activeCollaboratorsNowSet.size,
+      activeCollaboratorsPrev24h: activeCollaboratorsPrevSet.size,
+      activeCollaboratorsDaily,
+      roomHealthScore,
+      roomHealthPrevScore,
+      roomHealthDaily,
+    }
+  }, [focusSessions, joinedRoomIds.length, nowTimestamp, roomPresenceByRoom, roomTasksByRoom])
+
+  const focusedHours = Number((analytics.focusMinutesToday / 60).toFixed(1))
   const focusPercent = Math.min(100, Math.round((focusedHours / focusGoalHours) * 100))
+  const metrics = React.useMemo(
+    () => [
+      {
+        label: "FOCUSED TIME",
+        value: `${(analytics.focusMinutes7d / 60).toFixed(1)}h`,
+        trend: formatDelta(
+          analytics.focusMinutes7d,
+          analytics.focusMinutesPrev7d,
+          " vs prior 7d"
+        ),
+        points: analytics.focusDailyMinutes,
+      },
+      {
+        label: "TEAM VELOCITY",
+        value: `${analytics.velocityPercent}%`,
+        trend: formatDelta(
+          analytics.velocityPercent,
+          analytics.velocityPrevPercent,
+          " completion rate"
+        ),
+        points: analytics.velocityDailyCompleted,
+      },
+      {
+        label: "ACTIVE COLLABORATORS",
+        value: `${analytics.activeCollaboratorsNow}`,
+        trend: formatDelta(
+          analytics.activeCollaboratorsNow,
+          analytics.activeCollaboratorsPrev24h,
+          " vs previous 24h"
+        ),
+        points: analytics.activeCollaboratorsDaily,
+      },
+      {
+        label: "ROOM HEALTH",
+        value: `${analytics.roomHealthScore}%`,
+        trend: formatDelta(
+          analytics.roomHealthScore,
+          analytics.roomHealthPrevScore,
+          " score"
+        ),
+        points: analytics.roomHealthDaily,
+      },
+    ],
+    [analytics]
+  )
   const todayPlan = React.useMemo(() => {
     const scoreTask = (task: AssignedRoomTask) => {
       let score = 0
@@ -210,7 +492,7 @@ export default function Page() {
                 Good afternoon, {firstName}.
               </h1>
               <p className="mt-2 text-muted-foreground">
-                Ready for focused collaboration? You have 3 rooms active today.
+                Ready for focused collaboration? You have {analytics.roomCount} rooms active today.
               </p>
             </div>
 
@@ -247,7 +529,7 @@ export default function Page() {
               </Button>
             </form>
 
-            <div className="mb-8 grid gap-4 md:grid-cols-3">
+            <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {metrics.map((metric) => (
                 <div
                   key={metric.label}
@@ -269,6 +551,16 @@ export default function Page() {
                 </div>
               ))}
             </div>
+
+            {joinedRoomIds.map((roomId) => (
+              <RoomMetricsCollector
+                key={roomId}
+                roomId={roomId}
+                sessionToken={sessionToken}
+                onTasks={handleRoomTasks}
+                onPresence={handleRoomPresence}
+              />
+            ))}
 
             <div className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
               <div className="mb-3 flex items-center justify-between">

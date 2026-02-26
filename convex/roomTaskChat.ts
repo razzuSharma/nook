@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
+import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 
 function toHex(bytes: Uint8Array) {
@@ -40,7 +41,7 @@ async function requireUserBySession(
 
 async function requireActiveRoomMembership(
   ctx: QueryCtx | MutationCtx,
-  roomId: string,
+  roomId: Id<"rooms">,
   userId: string
 ) {
   const membership = await ctx.db
@@ -57,7 +58,7 @@ async function requireActiveRoomMembership(
 
 async function requireTaskInRoom(
   ctx: QueryCtx | MutationCtx,
-  roomId: string,
+  roomId: Id<"rooms">,
   taskId: string
 ) {
   const task = await ctx.db

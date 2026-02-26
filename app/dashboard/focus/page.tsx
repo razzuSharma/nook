@@ -85,6 +85,36 @@ function readRuntime(): FocusRuntime | null {
 }
 
 export default function FocusPage() {
+  return (
+    <React.Suspense fallback={<FocusPageFallback />}>
+      <FocusPageContent />
+    </React.Suspense>
+  )
+}
+
+function FocusPageFallback() {
+  return (
+    <SidebarProvider
+      style={
+        {
+          "--sidebar-width": "calc(var(--spacing) * 64)",
+          "--header-height": "calc(var(--spacing) * 12)",
+        } as React.CSSProperties
+      }
+    >
+      <AppSidebar variant="sidebar" />
+      <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
+        <SiteHeader currentPage="Focus" />
+        <div className="flex flex-1 items-center justify-center px-4 py-10">
+          <p className="text-sm text-muted-foreground">Loading focus session…</p>
+        </div>
+      </SidebarInset>
+      <RightSidebar />
+    </SidebarProvider>
+  )
+}
+
+function FocusPageContent() {
   const searchParams = useSearchParams()
   const { sessionToken } = useAuth()
   const roomIdParam = searchParams.get("roomId")

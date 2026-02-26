@@ -8,6 +8,27 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function VerifyEmailPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_20%_0%,rgba(6,182,212,0.18),transparent_40%),linear-gradient(180deg,var(--nook-surface)_0%,var(--background)_100%)] px-4 py-10">
+          <Card className="w-full max-w-md border-cyan-500/20 bg-background/80 shadow-xl">
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl">Email verification</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground text-center">Loading verification…</p>
+            </CardContent>
+          </Card>
+        </main>
+      }
+    >
+      <VerifyEmailContent />
+    </React.Suspense>
+  )
+}
+
+function VerifyEmailContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { verifyEmail } = useAuth()
