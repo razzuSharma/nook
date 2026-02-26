@@ -16,6 +16,7 @@ export function SiteHeader({
   actionEventName?: string
 }) {
   const router = useRouter()
+  const showAction = Boolean(actionLabel && actionEventName)
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center border-b border-cyan-500/15 bg-background/70 backdrop-blur transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
@@ -37,16 +38,18 @@ export function SiteHeader({
             <Flame className="size-4" />
             DEEP WORK MODE
           </Button>
-          <Button
-            size="sm"
-            className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-            onClick={() => {
-              window.dispatchEvent(new Event(actionEventName))
-            }}
-          >
-            <Plus />
-            {actionLabel}
-          </Button>
+          {showAction ? (
+            <Button
+              size="sm"
+              className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+              onClick={() => {
+                window.dispatchEvent(new Event(actionEventName))
+              }}
+            >
+              <Plus />
+              {actionLabel}
+            </Button>
+          ) : null}
           <ThemeToggle />
         </div>
       </div>

@@ -1,5 +1,28 @@
 import { mutation, query } from "./_generated/server"
+import type { MutationCtx } from "./_generated/server"
+import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+
+async function requireTaskEditorRole(
+  ctx: MutationCtx,
+  roomId: Id<"rooms">,
+  userId?: string
+) {
+  if (!userId) {
+    throw new Error("Task editing requires a signed-in room member.")
+  }
+  const membership = await ctx.db
+    .query("roomMembers")
+    .withIndex("by_room_user", (query) => query.eq("roomId", roomId).eq("userId", userId))
+    .first()
+
+  if (!membership || membership.status !== "active") {
+    throw new Error("Join the room before editing tasks.")
+  }
+  if (membership.role === "viewer") {
+    throw new Error("Viewers can view tasks, but cannot edit them.")
+  }
+}
 
 export const listByRoom = query({
   args: {
@@ -76,6 +99,8 @@ export const syncByRoom = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    await requireTaskEditorRole(ctx, args.roomId, args.actorUserId)
+
     const existing = await ctx.db
       .query("roomTasks")
       .withIndex("by_room_order", (query) => query.eq("roomId", args.roomId))
@@ -208,6 +233,9 @@ export const createQuickTask = mutation({
 
     if (!membership || membership.status !== "active") {
       throw new Error("Join the room before creating tasks.")
+    }
+    if (membership.role === "viewer") {
+      throw new Error("Viewers can view tasks, but cannot create them.")
     }
 
     const latestTask = await ctx.db
