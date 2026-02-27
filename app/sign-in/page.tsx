@@ -14,6 +14,7 @@ export default function SignInPage() {
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
+  const [notice, setNotice] = React.useState<string | null>(null)
   const [verificationLink, setVerificationLink] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [isResending, setIsResending] = React.useState(false)
@@ -28,6 +29,7 @@ export default function SignInPage() {
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setNotice(null)
     setVerificationLink(null)
     setIsSubmitting(true)
     try {
@@ -42,11 +44,13 @@ export default function SignInPage() {
 
   async function onResendVerification() {
     setError(null)
+    setNotice(null)
     setVerificationLink(null)
     setIsResending(true)
     try {
       const result = await resendVerificationEmail(email)
-      setVerificationLink(result.verificationLink)
+      if (result.verificationLink) setVerificationLink(result.verificationLink)
+      setNotice("If this email can receive verification, we sent a verification link.")
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -98,6 +102,7 @@ export default function SignInPage() {
               />
             </div>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
+            {notice ? <p className="text-sm text-emerald-600">{notice}</p> : null}
             {error?.toLowerCase().includes("verify your email") ? (
               <Button
                 type="button"
@@ -118,6 +123,12 @@ export default function SignInPage() {
             >
               {isSubmitting ? "Signing in..." : "Sign In"}
             </Button>
+            <p className="text-center text-sm text-muted-foreground">
+              Forgot password?{" "}
+              <Link href="/forgot-password" className="font-medium text-cyan-700 dark:text-cyan-300">
+                Reset it
+              </Link>
+            </p>
           </form>
           {verificationLink ? (
             <div className="mt-4 rounded-md border border-cyan-500/30 bg-cyan-500/10 p-3 text-sm">

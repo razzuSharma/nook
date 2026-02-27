@@ -95,6 +95,18 @@ type AuthApiShape = {
       }
     }
   >
+  requestPasswordReset: FunctionReference<
+    "mutation",
+    "public",
+    { email: string; siteUrl: string },
+    { message: string }
+  >
+  resetPassword: FunctionReference<
+    "mutation",
+    "public",
+    { token: string; newPassword: string },
+    { reset: boolean }
+  >
   updateProfile: FunctionReference<
     "mutation",
     "public",

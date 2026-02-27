@@ -43,6 +43,8 @@ type AuthContextValue = {
   signIn: (input: SignInInput) => Promise<void>
   signUp: (input: SignUpInput) => Promise<{ verificationLink: string }>
   resendVerificationEmail: (email: string) => Promise<{ verificationLink: string }>
+  requestPasswordReset: (email: string) => Promise<{ message: string }>
+  resetPassword: (token: string, newPassword: string) => Promise<void>
   verifyEmail: (token: string) => Promise<void>
   updateProfile: (input: {
     name: string
@@ -94,6 +96,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUpMutation = useMutation(authApi.signUp)
   const verifyEmailMutation = useMutation(authApi.verifyEmail)
   const resendVerificationMutation = useMutation(authApi.resendVerificationEmail)
+  const requestPasswordResetMutation = useMutation(authApi.requestPasswordReset)
+  const resetPasswordMutation = useMutation(authApi.resetPassword)
   const updateProfileMutation = useMutation(authApi.updateProfile)
   const signOutMutation = useMutation(authApi.signOut)
 
@@ -179,6 +183,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [resendVerificationMutation]
   )
 
+  const requestPasswordReset = React.useCallback(
+    async (email: string) => {
+      const result = await requestPasswordResetMutation({
+        email,
+        siteUrl: getSiteUrl(),
+      })
+      return { message: result.message }
+    },
+    [requestPasswordResetMutation]
+  )
+
+  const resetPassword = React.useCallback(
+    async (token: string, newPassword: string) => {
+      await resetPasswordMutation({ token, newPassword })
+    },
+    [resetPasswordMutation]
+  )
+
   const verifyEmail = React.useCallback(
     async (token: string) => {
       const result = await verifyEmailMutation({ token })
@@ -262,6 +284,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signUp,
         resendVerificationEmail,
+        requestPasswordReset,
+        resetPassword,
         verifyEmail,
         updateProfile,
         signOut,
