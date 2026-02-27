@@ -3,6 +3,8 @@ import type { MutationCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
 
+const COMPLETED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+
 async function requireTaskEditorRole(
   ctx: MutationCtx,
   roomId: Id<"rooms">,
@@ -22,6 +24,34 @@ async function requireTaskEditorRole(
   if (membership.role === "viewer") {
     throw new Error("Viewers can view tasks, but cannot edit them.")
   }
+}
+
+async function createAssignmentNotification(
+  ctx: MutationCtx,
+  args: {
+    roomId: Id<"rooms">
+    taskId: string
+    taskTitle: string
+    assigneeUserId?: Id<"users">
+    actorUserId: string
+  }
+) {
+  if (!args.assigneeUserId) return
+  if (String(args.assigneeUserId) === args.actorUserId) return
+
+  const assignee = await ctx.db.get(args.assigneeUserId)
+  if (!assignee || !assignee.notificationInApp) return
+  const room = await ctx.db.get(args.roomId)
+  const roomName = room?.name ?? "Room"
+  await ctx.db.insert("userNotifications", {
+    userId: args.assigneeUserId,
+    type: "task_assigned",
+    title: "Task assigned to you",
+    message: `${args.taskTitle} in ${roomName}`,
+    roomId: args.roomId,
+    taskId: args.taskId,
+    createdAt: Date.now(),
+  })
 }
 
 export const listByRoom = query({
@@ -242,6 +272,13 @@ export const syncByRoom = mutation({
               ? `Assigned task to ${task.assignee}.`
               : "Cleared assignee."
           )
+          await createAssignmentNotification(ctx, {
+            roomId: args.roomId,
+            taskId: task.taskId,
+            taskTitle: task.title,
+            assigneeUserId: task.assigneeUserId,
+            actorUserId,
+          })
         }
         if ((existingTask.dueAt ?? undefined) !== (task.dueAt ?? undefined)) {
           await logEvent(
@@ -277,6 +314,13 @@ export const syncByRoom = mutation({
           completedAt: task.status === "completed" ? now : undefined,
         })
         await logEvent(task.taskId, "created", `Created task "${task.title}".`)
+        await createAssignmentNotification(ctx, {
+          roomId: args.roomId,
+          taskId: task.taskId,
+          taskTitle: task.title,
+          assigneeUserId: task.assigneeUserId,
+          actorUserId,
+        })
       }
     }
   },
@@ -444,5 +488,53 @@ export const completeFromFocus = mutation({
       status: nextStatus,
       followUpTaskId,
     }
+  },
+})
+
+export const cleanupCompletedOlderThanWeek = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - COMPLETED_RETENTION_MS
+    const completedTasks = await ctx.db.query("roomTasks").collect()
+    const expired = completedTasks.filter(
+      (task) =>
+        task.status === "completed" &&
+        Boolean(task.completedAt && task.completedAt <= cutoff)
+    )
+
+    for (const task of expired) {
+      const events = await ctx.db
+        .query("roomTaskEvents")
+        .withIndex("by_room_task_createdAt", (query) =>
+          query.eq("roomId", task.roomId).eq("taskId", task.taskId)
+        )
+        .collect()
+      const messages = await ctx.db
+        .query("roomTaskMessages")
+        .withIndex("by_room_task_createdAt", (query) =>
+          query.eq("roomId", task.roomId).eq("taskId", task.taskId)
+        )
+        .collect()
+      const files = await ctx.db
+        .query("roomTaskFiles")
+        .withIndex("by_room_task_createdAt", (query) =>
+          query.eq("roomId", task.roomId).eq("taskId", task.taskId)
+        )
+        .collect()
+      const relatedNotifications = await ctx.db
+        .query("userNotifications")
+        .withIndex("by_room_task", (query) =>
+          query.eq("roomId", task.roomId).eq("taskId", task.taskId)
+        )
+        .collect()
+
+      for (const doc of events) await ctx.db.delete(doc._id)
+      for (const doc of messages) await ctx.db.delete(doc._id)
+      for (const doc of files) await ctx.db.delete(doc._id)
+      for (const doc of relatedNotifications) await ctx.db.delete(doc._id)
+      await ctx.db.delete(task._id)
+    }
+
+    return { deletedTasks: expired.length }
   },
 })

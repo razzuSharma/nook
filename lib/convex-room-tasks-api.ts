@@ -87,6 +87,12 @@ type RoomTasksApiShape = {
       followUpTaskId?: string
     }
   >
+  cleanupCompletedOlderThanWeek: FunctionReference<
+    "mutation",
+    "public",
+    Record<string, never>,
+    { deletedTasks: number }
+  >
 }
 
 export const roomTasksApi = (
