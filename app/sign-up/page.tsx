@@ -10,6 +10,7 @@ import { avatarSrcForKey, normalizeAvatarKey } from "@/lib/avatar-options"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toAuthErrorMessage } from "@/lib/auth-error-message"
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -46,12 +47,7 @@ export default function SignUpPage() {
       setVerificationLink(result.verificationLink)
       setNotice("Account created. Verify your email to continue.")
     } catch (submitError) {
-      const message = submitError instanceof Error ? submitError.message : "Unable to sign up."
-      if (message.toLowerCase().includes("already exists")) {
-        setError("This email is already in use. Use another email or sign in.")
-      } else {
-        setError(message)
-      }
+      setError(toAuthErrorMessage(submitError, "Unable to sign up."))
     } finally {
       setIsSubmitting(false)
     }
