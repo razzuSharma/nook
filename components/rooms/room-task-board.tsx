@@ -25,11 +25,8 @@ import { CSS } from "@dnd-kit/utilities"
 import { useMutation, useQuery } from "convex/react"
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronUp,
   Crosshair,
   Paperclip,
-  Play,
   GripVertical,
   Info,
   Link2,
@@ -41,7 +38,6 @@ import {
   Search,
   Send,
   SlidersHorizontal,
-  Square,
   Trash2,
   UserRound,
 } from "lucide-react"
@@ -49,7 +45,6 @@ import {
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { roomsApi } from "@/lib/convex-rooms-api"
-import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { roomTaskChatApi } from "@/lib/convex-room-task-chat-api"
 import { useAuth } from "@/components/providers/auth-provider"
 import { Badge } from "@/components/ui/badge"
@@ -159,13 +154,6 @@ type TaskThreadData = {
   }>
 }
 
-type FocusPresenceItem = {
-  userId: string
-  taskId?: string
-  endsAt: number | null
-  status: string
-}
-
 export type RoomTaskFocusTarget = {
   id: string
   title: string
@@ -175,6 +163,7 @@ type TaskBoardState = Record<TaskStatus, RoomTask[]>
 type DueFilter = "all" | "overdue" | "today" | "week" | "none"
 type AssigneeFilter = "all" | "mine" | "none" | string
 type PriorityFilter = "all" | TaskPriority
+type StatusFilter = "all" | TaskStatus | "open"
 type SortMode = "manual" | "priority" | "due_soon"
 
 const boardColumns: Array<{
@@ -335,6 +324,7 @@ function taskMatchesFilters(
     search: string
     assignee: AssigneeFilter
     priority: PriorityFilter
+    status: StatusFilter
     due: DueFilter
     userId?: string
   }
@@ -356,6 +346,10 @@ function taskMatchesFilters(
   }
 
   if (opts.priority !== "all" && task.priority !== opts.priority) {
+    return false
+  }
+  if (opts.status === "open" && task.status === "completed") return false
+  if (opts.status !== "all" && opts.status !== "open" && task.status !== opts.status) {
     return false
   }
 
@@ -389,10 +383,6 @@ function BaseTaskCard({
   onEdit,
   onStartFocus,
   onDiscuss,
-  onStartTaskFocus,
-  onStopTaskFocus,
-  isTaskFocusing = false,
-  focusRemainingLabel,
   dragBindings,
   isDraggable = false,
 }: {
@@ -401,10 +391,6 @@ function BaseTaskCard({
   onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
-  onStartTaskFocus?: (task: RoomTask) => void
-  onStopTaskFocus?: () => void
-  isTaskFocusing?: boolean
-  focusRemainingLabel?: string
   dragBindings?: React.HTMLAttributes<HTMLElement>
   isDraggable?: boolean
 }) {
@@ -518,39 +504,6 @@ function BaseTaskCard({
           </div>
         )}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {isTaskFocusing ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 border-rose-500/30 px-2 text-[11px] text-rose-700 hover:bg-rose-500/10 dark:text-rose-300"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation()
-              onStopTaskFocus?.()
-            }}
-          >
-            <Square className="size-3.5" />
-            End Focus {focusRemainingLabel ? `(${focusRemainingLabel})` : ""}
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 border-cyan-500/30 px-2 text-[11px] text-cyan-700 hover:bg-cyan-500/10 dark:text-cyan-300"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation()
-              onStartTaskFocus?.(task)
-            }}
-          >
-            <Play className="size-3.5" />
-            Start Focus
-          </Button>
-        )}
-      </div>
     </article>
   )
 }
@@ -561,10 +514,6 @@ function SortableTaskCard(props: {
   onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
-  onStartTaskFocus?: (task: RoomTask) => void
-  onStopTaskFocus?: () => void
-  isTaskFocusing?: boolean
-  focusRemainingLabel?: string
 }) {
   const { task } = props
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -615,12 +564,15 @@ function ColumnDropZone({
 export function RoomTaskBoard({
   roomId,
   onStartFocusTask,
+  initialDueFilter = "all",
+  initialStatusFilter = "all",
 }: {
   roomId: Id<"rooms">
   onStartFocusTask?: (task: RoomTaskFocusTarget) => void
+  initialDueFilter?: DueFilter
+  initialStatusFilter?: StatusFilter
 }) {
   const { sessionToken, user } = useAuth()
-  const [now, setNow] = React.useState(() => Date.now())
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
     | Array<{
         taskId: string
@@ -638,10 +590,6 @@ export function RoomTaskBoard({
     roomsApi.listMembersByRoom,
     sessionToken ? { sessionToken, roomId } : "skip"
   ) as RoomMember[] | undefined
-  const focusPresence = useQuery(
-    roomFocusApi.listPresence,
-    sessionToken ? { sessionToken, roomId } : "skip"
-  ) as FocusPresenceItem[] | undefined
   const members = React.useMemo(() => membersQuery ?? [], [membersQuery])
 
   const memberNameById = React.useMemo(
@@ -660,8 +608,6 @@ export function RoomTaskBoard({
   const canManageFiles = canEditTasks
 
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
-  const startRoomFocus = useMutation(roomFocusApi.start)
-  const completeRoomFocus = useMutation(roomFocusApi.complete)
   const sendThreadMessage = useMutation(roomTaskChatApi.sendMessage)
   const shareThreadFile = useMutation(roomTaskChatApi.shareFile)
   const generateThreadUploadUrl = useMutation(roomTaskChatApi.generateUploadUrl)
@@ -693,11 +639,11 @@ export function RoomTaskBoard({
   const [showDraftSpecificDue, setShowDraftSpecificDue] = React.useState(false)
   const [draftDueAt, setDraftDueAt] = React.useState("")
   const [isAddTaskOpen, setIsAddTaskOpen] = React.useState(false)
-  const [isMemberProgressOpen, setIsMemberProgressOpen] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [assigneeFilter, setAssigneeFilter] = React.useState<AssigneeFilter>("all")
   const [priorityFilter, setPriorityFilter] = React.useState<PriorityFilter>("all")
-  const [dueFilter, setDueFilter] = React.useState<DueFilter>("all")
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>(initialStatusFilter)
+  const [dueFilter, setDueFilter] = React.useState<DueFilter>(initialDueFilter)
   const [sortMode, setSortMode] = React.useState<SortMode>("manual")
   const [activeId, setActiveId] = React.useState<string | null>(null)
   const [editingTaskId, setEditingTaskId] = React.useState<string | null>(null)
@@ -724,9 +670,12 @@ export function RoomTaskBoard({
   const [threadError, setThreadError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
+    setStatusFilter(initialStatusFilter)
+  }, [initialStatusFilter])
+
+  React.useEffect(() => {
+    setDueFilter(initialDueFilter)
+  }, [initialDueFilter])
 
   const thread = useQuery(
     roomTaskChatApi.listThread,
@@ -1109,6 +1058,7 @@ export function RoomTaskBoard({
     searchQuery.trim().length > 0 ||
     assigneeFilter !== "all" ||
     priorityFilter !== "all" ||
+    statusFilter !== "all" ||
     dueFilter !== "all" ||
     sortMode !== "manual"
   const activeFilterPills = React.useMemo(() => {
@@ -1120,6 +1070,7 @@ export function RoomTaskBoard({
       else pills.push(`Assignee: ${memberNameById.get(assigneeFilter) ?? "Custom"}`)
     }
     if (priorityFilter !== "all") pills.push(`Priority: ${priorityFilter}`)
+    if (statusFilter !== "all") pills.push(`Status: ${statusFilter}`)
     if (dueFilter !== "all") pills.push(`Due: ${dueFilter}`)
     if (sortMode !== "manual") pills.push(`Sort: ${sortMode.replace("_", " ")}`)
     return pills
@@ -1128,6 +1079,7 @@ export function RoomTaskBoard({
     dueFilter,
     memberNameById,
     priorityFilter,
+    statusFilter,
     searchQuery,
     sortMode,
   ])
@@ -1137,6 +1089,7 @@ export function RoomTaskBoard({
       search: searchQuery,
       assignee: assigneeFilter,
       priority: priorityFilter,
+      status: statusFilter,
       due: dueFilter,
       userId: user?.id,
     }
@@ -1155,80 +1108,16 @@ export function RoomTaskBoard({
         sortMode
       ),
     } as TaskBoardState
-  }, [assigneeFilter, board, dueFilter, priorityFilter, searchQuery, sortMode, user?.id])
-
-  const currentUserFocus = React.useMemo(() => {
-    if (!user?.id || !focusPresence) return null
-    return (
-      focusPresence.find(
-        (item) => item.userId === user.id && item.status === "focusing"
-      ) ?? null
-    )
-  }, [focusPresence, user?.id])
-
-  const currentFocusTaskId = currentUserFocus?.taskId
-  const currentFocusRemainingLabel = React.useMemo(() => {
-    if (!currentUserFocus?.endsAt) return null
-    const seconds = Math.max(0, Math.ceil((currentUserFocus.endsAt - now) / 1000))
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, "0")}`
-  }, [currentUserFocus?.endsAt, now])
-
-  async function startTaskFocus(task: RoomTask) {
-    if (!sessionToken) return
-    await startRoomFocus({
-      sessionToken,
-      roomId,
-      intention: task.title,
-      durationMinutes: 25,
-      taskId: task.id,
-      visibility: "room",
-    })
-  }
-
-  async function stopTaskFocus() {
-    if (!sessionToken) return
-    await completeRoomFocus({
-      sessionToken,
-      roomId,
-      reflection: "",
-    })
-  }
+  }, [assigneeFilter, board, dueFilter, priorityFilter, searchQuery, sortMode, statusFilter, user?.id])
 
   function clearFilters() {
     setSearchQuery("")
     setAssigneeFilter("all")
     setPriorityFilter("all")
+    setStatusFilter("all")
     setDueFilter("all")
     setSortMode("manual")
   }
-  const memberProgress = React.useMemo(() => {
-    return members
-      .map((member) => {
-        const assigned = boardTasks.filter((task) => task.assigneeUserId === member.userId)
-        const total = assigned.length
-        const completed = assigned.filter((task) => task.status === "completed").length
-        const working = assigned.filter((task) => task.status === "working").length
-        const blocked = assigned.filter((task) => task.status === "blocked").length
-        const todo = assigned.filter((task) => task.status === "todo").length
-        const progress = total > 0 ? Math.round((completed / total) * 100) : 0
-        return {
-          member,
-          total,
-          completed,
-          working,
-          blocked,
-          todo,
-          progress,
-        }
-      })
-      .sort((left, right) => {
-        if (right.total !== left.total) return right.total - left.total
-        if (right.working !== left.working) return right.working - left.working
-        return left.member.name.localeCompare(right.member.name)
-      })
-  }, [boardTasks, members])
   const nowTasks = React.useMemo(() => board.working.slice(0, 4), [board.working])
   const nextTasks = React.useMemo(() => board.todo.slice(0, 4), [board.todo])
   const blockedTasks = React.useMemo(() => board.blocked.slice(0, 4), [board.blocked])
@@ -1334,6 +1223,33 @@ export function RoomTaskBoard({
                 <DropdownMenuItem onSelect={() => setPriorityFilter("low")}>
                   {priorityFilter === "low" ? "• " : ""}
                   Low
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Status</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => setStatusFilter("all")}>
+                  {statusFilter === "all" ? "• " : ""}
+                  Any status
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStatusFilter("open")}>
+                  {statusFilter === "open" ? "• " : ""}
+                  Open only
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStatusFilter("todo")}>
+                  {statusFilter === "todo" ? "• " : ""}
+                  To do
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStatusFilter("working")}>
+                  {statusFilter === "working" ? "• " : ""}
+                  In progress
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStatusFilter("blocked")}>
+                  {statusFilter === "blocked" ? "• " : ""}
+                  Blocked
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStatusFilter("completed")}>
+                  {statusFilter === "completed" ? "• " : ""}
+                  Completed
                 </DropdownMenuItem>
 
                 <DropdownMenuSeparator />
@@ -1528,18 +1444,6 @@ export function RoomTaskBoard({
                             setShowFileLinkInput(false)
                             setThreadError(null)
                           }}
-                          onStartTaskFocus={(selectedTask) => {
-                            void startTaskFocus(selectedTask)
-                          }}
-                          onStopTaskFocus={() => {
-                            void stopTaskFocus()
-                          }}
-                          isTaskFocusing={currentFocusTaskId === task.id}
-                          focusRemainingLabel={
-                            currentFocusTaskId === task.id
-                              ? (currentFocusRemainingLabel ?? undefined)
-                              : undefined
-                          }
                         />
                       ))}
                     </div>
@@ -1621,18 +1525,6 @@ export function RoomTaskBoard({
                               setShowFileLinkInput(false)
                               setThreadError(null)
                             }}
-                            onStartTaskFocus={(selectedTask) => {
-                              void startTaskFocus(selectedTask)
-                            }}
-                            onStopTaskFocus={() => {
-                              void stopTaskFocus()
-                            }}
-                            isTaskFocusing={currentFocusTaskId === task.id}
-                            focusRemainingLabel={
-                              currentFocusTaskId === task.id
-                                ? (currentFocusRemainingLabel ?? undefined)
-                                : undefined
-                            }
                           />
                         ))}
                       </div>
@@ -1698,86 +1590,6 @@ export function RoomTaskBoard({
           </DragOverlay>
         </DndContext>
       )}
-
-      <Card className="border-[color:var(--nook-sidebar-border)] bg-background/70 backdrop-blur">
-        <CardHeader className="pb-3">
-          <button
-            type="button"
-            onClick={() => setIsMemberProgressOpen((prev) => !prev)}
-            className="flex w-full items-center justify-between text-left"
-          >
-            <CardTitle className="text-lg">Member Progress</CardTitle>
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              {isMemberProgressOpen ? "Collapse" : "Expand"}
-              {isMemberProgressOpen ? (
-                <ChevronUp className="size-4" />
-              ) : (
-                <ChevronDown className="size-4" />
-              )}
-            </span>
-          </button>
-        </CardHeader>
-        {isMemberProgressOpen ? (
-          <CardContent>
-            {memberProgress.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No room members found.</p>
-            ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {memberProgress.map((item) => {
-                  const initials = item.member.name
-                    .split(" ")
-                    .map((part) => part[0] ?? "")
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase()
-
-                  return (
-                    <article
-                      key={item.member.userId}
-                      className="rounded-xl border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3"
-                    >
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="size-9 border border-cyan-500/30">
-                            <AvatarImage
-                              src={avatarSrcForKey(item.member.avatarKey)}
-                              alt={item.member.name}
-                            />
-                            <AvatarFallback>{initials}</AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="text-sm font-medium leading-tight">{item.member.name}</p>
-                            <p className="text-xs text-muted-foreground">{item.member.role}</p>
-                          </div>
-                        </div>
-                        <Badge variant="secondary">{item.total} tasks</Badge>
-                      </div>
-
-                      <div className="mb-2 h-2 overflow-hidden rounded-full bg-slate-300/40 dark:bg-slate-700/60">
-                        <div
-                          className={cn(
-                            "h-full rounded-full bg-cyan-500 transition-all",
-                            item.progress === 100 && "bg-emerald-500"
-                          )}
-                          style={{ width: `${item.progress}%` }}
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-5 gap-2 text-xs">
-                        <span className="text-muted-foreground">Done: {item.completed}</span>
-                        <span className="text-muted-foreground">Doing: {item.working}</span>
-                        <span className="text-muted-foreground">Blocked: {item.blocked}</span>
-                        <span className="text-muted-foreground">Todo: {item.todo}</span>
-                        <span className="text-right font-medium">{item.progress}%</span>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
-            )}
-          </CardContent>
-        ) : null}
-      </Card>
 
       <Dialog open={isAddTaskOpen} onOpenChange={setIsAddTaskOpen}>
         <DialogContent className="border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-bg-end)] p-0 sm:max-w-[560px]">

@@ -31,7 +31,14 @@ type RoomFocusApiShape = {
   complete: FunctionReference<
     "mutation",
     "public",
-    { sessionToken: string; roomId: Id<"rooms">; reflection?: string },
+    {
+      sessionToken: string
+      roomId: Id<"rooms">
+      reflection?: string
+      outcome?: "done" | "progress" | "blocked"
+      blockerNote?: string
+      followUpTaskId?: string
+    },
     unknown
   >
 }

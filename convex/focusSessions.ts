@@ -87,6 +87,17 @@ export const create = mutation({
     sessionId: v.string(),
     intention: v.string(),
     reflection: v.string(),
+    roomId: v.optional(v.id("rooms")),
+    taskId: v.optional(v.string()),
+    outcome: v.optional(
+      v.union(
+        v.literal("done"),
+        v.literal("progress"),
+        v.literal("blocked")
+      )
+    ),
+    blockerNote: v.optional(v.string()),
+    followUpTaskId: v.optional(v.string()),
     durationMinutes: v.number(),
     completedAt: v.string(),
   },
@@ -97,6 +108,11 @@ export const create = mutation({
       sessionId: args.sessionId,
       intention: args.intention.trim(),
       reflection: args.reflection.trim(),
+      roomId: args.roomId,
+      taskId: args.taskId,
+      outcome: args.outcome,
+      blockerNote: args.blockerNote?.trim(),
+      followUpTaskId: args.followUpTaskId,
       durationMinutes: args.durationMinutes,
       completedAt: args.completedAt,
       createdAt: Date.now(),

@@ -24,6 +24,22 @@ type RoomTasksApiShape = {
       roomName: string
     }>
   >
+  listRecentActivityByUser: FunctionReference<
+    "query",
+    "public",
+    { userId: string; limit?: number },
+    Array<{
+      id: string
+      roomId: Id<"rooms">
+      taskId: string
+      taskTitle: string
+      type: string
+      message: string
+      createdAt: number
+      actorUserId: string
+      actorName: string
+    }>
+  >
   syncByRoom: FunctionReference<
     "mutation",
     "public",
@@ -54,6 +70,22 @@ type RoomTasksApiShape = {
       title: string
     },
     { taskId: string }
+  >
+  completeFromFocus: FunctionReference<
+    "mutation",
+    "public",
+    {
+      roomId: Id<"rooms">
+      taskId: string
+      actorUserId: string
+      outcome: "done" | "progress" | "blocked"
+      blockerNote?: string
+    },
+    {
+      updatedTaskId: string
+      status: "todo" | "working" | "blocked" | "completed"
+      followUpTaskId?: string
+    }
   >
 }
 

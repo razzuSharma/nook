@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
@@ -11,28 +12,49 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import { roomFocusApi } from "@/lib/convex-room-focus-api"
+import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { useAuth } from "@/components/providers/auth-provider"
 import type { Id } from "@/convex/_generated/dataModel"
-import {
-  SidebarInset,
-  SidebarProvider,
-} from "@/components/ui/sidebar"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Timer, ArrowRight, CheckCircle2 } from "lucide-react"
+import { toast } from "sonner"
 
 type SessionState = "START" | "RUNNING" | "REFLECT"
+type FocusOutcome = "done" | "progress" | "blocked"
 
 type FocusSessionRecord = {
   id: string
   intention: string
   reflection: string
+  taskId?: string
+  outcome?: FocusOutcome
+  followUpTaskId?: string
   durationMinutes: number
   completedAt: string
 }
 
+type AssignedTask = {
+  taskId: string
+  title: string
+  priority: "low" | "medium" | "high"
+  status: "todo" | "working" | "blocked" | "completed"
+  roomId: Id<"rooms">
+  roomName: string
+}
+
+type RoomTaskCandidate = {
+  taskId: string
+  title: string
+  status: "todo" | "working" | "blocked" | "completed"
+}
+
 type FocusRuntime = {
   state: SessionState
+  selectedTaskId: string | null
   intention: string
   reflection: string
+  outcome: FocusOutcome
+  blockerNote: string
   durationMinutes: number
   sessionStartedAt: number | null
   sessionEndsAt: number | null
@@ -48,7 +70,7 @@ const AMBIENT_COPY = [
 
 const MIN_DURATION = 5
 const MAX_DURATION = 180
-const RUNTIME_STORAGE_KEY = "nook.focus.runtime.v1"
+const RUNTIME_STORAGE_KEY = "nook.focus.runtime.v2"
 
 function clampDuration(minutes: number) {
   return Math.min(Math.max(minutes, MIN_DURATION), MAX_DURATION)
@@ -106,7 +128,7 @@ function FocusPageFallback() {
       <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
         <SiteHeader currentPage="Focus" />
         <div className="flex flex-1 items-center justify-center px-4 py-10">
-          <p className="text-sm text-muted-foreground">Loading focus session…</p>
+          <p className="text-sm text-muted-foreground">Loading focus session...</p>
         </div>
       </SidebarInset>
       <RightSidebar />
@@ -116,14 +138,17 @@ function FocusPageFallback() {
 
 function FocusPageContent() {
   const searchParams = useSearchParams()
-  const { sessionToken } = useAuth()
+  const { sessionToken, user } = useAuth()
   const roomIdParam = searchParams.get("roomId")
   const taskIdParam = searchParams.get("taskId")
   const intentionParam = searchParams.get("intention")
-  const roomId = roomIdParam as Id<"rooms"> | null
+
   const [state, setState] = React.useState<SessionState>("START")
+  const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(taskIdParam)
   const [intention, setIntention] = React.useState("")
   const [reflection, setReflection] = React.useState("")
+  const [outcome, setOutcome] = React.useState<FocusOutcome>("progress")
+  const [blockerNote, setBlockerNote] = React.useState("")
   const [durationMinutes, setDurationMinutes] = React.useState(45)
   const [timeLeft, setTimeLeft] = React.useState(45 * 60)
   const [sessionStartedAt, setSessionStartedAt] = React.useState<number | null>(null)
@@ -131,6 +156,40 @@ function FocusPageContent() {
   const [sessionDurationSeconds, setSessionDurationSeconds] = React.useState(45 * 60)
   const [ambientCopy, setAmbientCopy] = React.useState(AMBIENT_COPY[0])
   const [runtimeReady, setRuntimeReady] = React.useState(false)
+
+  const assignedTasksQuery = useQuery(
+    roomTasksApi.listAssignedByUser,
+    user?.id ? { userId: user.id } : "skip"
+  ) as AssignedTask[] | undefined
+  const roomTasksQuery = useQuery(
+    roomTasksApi.listByRoom,
+    roomIdParam ? { roomId: roomIdParam as Id<"rooms"> } : "skip"
+  ) as RoomTaskCandidate[] | undefined
+
+  const focusCandidates = React.useMemo(() => {
+    if (roomIdParam) {
+      const roomId = roomIdParam as Id<"rooms">
+      return (roomTasksQuery ?? [])
+        .filter((task) => task.status !== "completed")
+        .map((task) => ({
+          taskId: task.taskId,
+          title: task.title,
+          priority: "medium" as const,
+          status: task.status,
+          roomId,
+          roomName: "Selected room",
+        }))
+    }
+
+    return (assignedTasksQuery ?? []).filter((task) => task.status !== "completed")
+  }, [assignedTasksQuery, roomIdParam, roomTasksQuery])
+
+  const selectedTask = React.useMemo(
+    () => focusCandidates.find((task) => task.taskId === selectedTaskId) ?? null,
+    [focusCandidates, selectedTaskId]
+  )
+
+  const selectedRoomId = selectedTask?.roomId ?? (roomIdParam as Id<"rooms"> | null)
 
   const sessionDocs = useQuery(
     focusSessionsApi.list,
@@ -143,20 +202,27 @@ function FocusPageContent() {
         }
       >
     | undefined
+
   const createSession = useMutation(focusSessionsApi.create)
   const startRoomFocus = useMutation(roomFocusApi.start)
   const markRoomFocusDone = useMutation(roomFocusApi.markDone)
   const completeRoomFocus = useMutation(roomFocusApi.complete)
+  const completeTaskFromFocus = useMutation(roomTasksApi.completeFromFocus)
+
   const sessionHistory = React.useMemo(() => {
     if (!sessionDocs) return []
     return sessionDocs.map((session) => ({
       id: session.sessionId,
       intention: session.intention,
       reflection: session.reflection,
+      taskId: session.taskId,
+      outcome: session.outcome,
+      followUpTaskId: session.followUpTaskId,
       durationMinutes: session.durationMinutes,
       completedAt: session.completedAt,
     }))
   }, [sessionDocs])
+
   const progressStats = React.useMemo(() => {
     const now = new Date()
     const todayKey = toLocalDateKey(now)
@@ -174,25 +240,12 @@ function FocusPageContent() {
       return total + session.durationMinutes
     }, 0)
 
-    const dailyMap = new Map<
-      string,
-      { minutes: number; sessions: number; intentions: string[] }
-    >()
-
-    for (const session of sessionHistory) {
-      const date = new Date(session.completedAt)
-      if (Number.isNaN(date.getTime())) continue
-      const key = toLocalDateKey(date)
-      const current = dailyMap.get(key) ?? { minutes: 0, sessions: 0, intentions: [] }
-      current.minutes += session.durationMinutes
-      current.sessions += 1
-      current.intentions.push(session.intention)
-      dailyMap.set(key, current)
-    }
-
-    const dailyEntries = Array.from(dailyMap.entries())
-      .sort((left, right) => (left[0] < right[0] ? 1 : -1))
-      .slice(0, 7)
+    const movedTasksToday = todaySessions.filter(
+      (session) => session.outcome === "done" || session.outcome === "progress"
+    ).length
+    const blockersRaisedToday = todaySessions.filter(
+      (session) => session.outcome === "blocked"
+    ).length
 
     return {
       todaySessions,
@@ -201,14 +254,26 @@ function FocusPageContent() {
         0
       ),
       weekMinutes,
-      dailyEntries,
+      movedTasksToday,
+      blockersRaisedToday,
     }
   }, [sessionHistory])
 
   React.useEffect(() => {
-    if (!intentionParam || intention.trim().length > 0) return
-    setIntention(intentionParam)
-  }, [intentionParam, intention])
+    if (focusCandidates.length === 0) return
+    if (!selectedTaskId || !focusCandidates.some((task) => task.taskId === selectedTaskId)) {
+      setSelectedTaskId(focusCandidates[0].taskId)
+    }
+  }, [focusCandidates, selectedTaskId])
+
+  React.useEffect(() => {
+    if (intention.trim().length > 0) return
+    if (selectedTask?.title) {
+      setIntention(selectedTask.title)
+      return
+    }
+    if (intentionParam) setIntention(intentionParam)
+  }, [intention, intentionParam, selectedTask])
 
   React.useEffect(() => {
     const runtime = readRuntime()
@@ -218,8 +283,11 @@ function FocusPageContent() {
     }
 
     setState(runtime.state)
+    setSelectedTaskId(runtime.selectedTaskId)
     setIntention(runtime.intention)
     setReflection(runtime.reflection)
+    setOutcome(runtime.outcome)
+    setBlockerNote(runtime.blockerNote)
     setDurationMinutes(clampDuration(runtime.durationMinutes || 45))
     setSessionStartedAt(runtime.sessionStartedAt)
     setSessionEndsAt(runtime.sessionEndsAt)
@@ -227,10 +295,7 @@ function FocusPageContent() {
     setAmbientCopy(runtime.ambientCopy || AMBIENT_COPY[0])
 
     if (runtime.state === "RUNNING" && runtime.sessionEndsAt) {
-      const remaining = Math.max(
-        0,
-        Math.ceil((runtime.sessionEndsAt - Date.now()) / 1000)
-      )
+      const remaining = Math.max(0, Math.ceil((runtime.sessionEndsAt - Date.now()) / 1000))
       setTimeLeft(remaining)
       if (remaining === 0) {
         setState("REFLECT")
@@ -258,6 +323,8 @@ function FocusPageContent() {
         setState("START")
         setIntention("")
         setReflection("")
+        setOutcome("progress")
+        setBlockerNote("")
         setDurationMinutes(45)
         setTimeLeft(45 * 60)
         setSessionStartedAt(null)
@@ -268,8 +335,11 @@ function FocusPageContent() {
       }
 
       setState(runtime.state)
+      setSelectedTaskId(runtime.selectedTaskId)
       setIntention(runtime.intention)
       setReflection(runtime.reflection)
+      setOutcome(runtime.outcome)
+      setBlockerNote(runtime.blockerNote)
       setDurationMinutes(clampDuration(runtime.durationMinutes || 45))
       setSessionStartedAt(runtime.sessionStartedAt)
       setSessionEndsAt(runtime.sessionEndsAt)
@@ -277,10 +347,7 @@ function FocusPageContent() {
       setAmbientCopy(runtime.ambientCopy || AMBIENT_COPY[0])
 
       if (runtime.state === "RUNNING" && runtime.sessionEndsAt) {
-        const remaining = Math.max(
-          0,
-          Math.ceil((runtime.sessionEndsAt - Date.now()) / 1000)
-        )
+        const remaining = Math.max(0, Math.ceil((runtime.sessionEndsAt - Date.now()) / 1000))
         setTimeLeft(remaining)
       }
     }
@@ -293,8 +360,11 @@ function FocusPageContent() {
     if (!runtimeReady) return
     const runtime: FocusRuntime = {
       state,
+      selectedTaskId,
       intention,
       reflection,
+      outcome,
+      blockerNote,
       durationMinutes,
       sessionStartedAt,
       sessionEndsAt,
@@ -305,8 +375,11 @@ function FocusPageContent() {
   }, [
     runtimeReady,
     state,
+    selectedTaskId,
     intention,
     reflection,
+    outcome,
+    blockerNote,
     durationMinutes,
     sessionStartedAt,
     sessionEndsAt,
@@ -324,10 +397,10 @@ function FocusPageContent() {
         if (remaining === 0) {
           setState("REFLECT")
           setSessionEndsAt(null)
-          if (sessionToken && roomId) {
+          if (sessionToken && selectedRoomId) {
             void markRoomFocusDone({
               sessionToken,
-              roomId,
+              roomId: selectedRoomId,
             })
           }
         }
@@ -336,7 +409,7 @@ function FocusPageContent() {
     return () => {
       if (timer) clearInterval(timer)
     }
-  }, [state, sessionEndsAt, sessionToken, roomId, markRoomFocusDone])
+  }, [state, sessionEndsAt, sessionToken, selectedRoomId, markRoomFocusDone])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -345,6 +418,13 @@ function FocusPageContent() {
   }
 
   const startSession = () => {
+    if (!selectedTask || !selectedRoomId) {
+      toast("Pick a task first", {
+        description: "Focus sessions must be linked to a task so outcomes can update work.",
+      })
+      return
+    }
+
     const safeMinutes = clampDuration(durationMinutes)
     const totalSeconds = safeMinutes * 60
     const startAt = Date.now()
@@ -357,15 +437,17 @@ function FocusPageContent() {
     setSessionDurationSeconds(totalSeconds)
     setTimeLeft(totalSeconds)
     setReflection("")
+    setOutcome("progress")
+    setBlockerNote("")
     setAmbientCopy(AMBIENT_COPY[Math.floor(Math.random() * AMBIENT_COPY.length)])
 
-    if (sessionToken && roomId) {
+    if (sessionToken) {
       void startRoomFocus({
         sessionToken,
-        roomId,
-        intention: (intention || intentionParam || "").trim() || "Deep Work",
+        roomId: selectedRoomId,
+        intention: (intention || selectedTask.title).trim() || "Deep Work",
         durationMinutes: safeMinutes,
-        taskId: taskIdParam ?? undefined,
+        taskId: selectedTask.taskId,
         visibility: "room",
       })
     }
@@ -374,18 +456,19 @@ function FocusPageContent() {
   const finishSession = () => {
     setState("REFLECT")
     setSessionEndsAt(null)
-    if (sessionToken && roomId) {
+    if (sessionToken && selectedRoomId) {
       void markRoomFocusDone({
         sessionToken,
-        roomId,
+        roomId: selectedRoomId,
       })
     }
   }
 
   const resetSession = () => {
     setState("START")
-    setIntention("")
     setReflection("")
+    setOutcome("progress")
+    setBlockerNote("")
     setTimeLeft(durationMinutes * 60)
     setSessionStartedAt(null)
     setSessionEndsAt(null)
@@ -393,18 +476,31 @@ function FocusPageContent() {
     window.localStorage.removeItem(RUNTIME_STORAGE_KEY)
   }
 
-  const saveSessionAndReset = async (skipReflection: boolean) => {
-    if (!sessionToken) {
+  const saveSessionAndReset = async () => {
+    if (!sessionToken || !sessionStartedAt || !selectedTask || !selectedRoomId || !user?.id) {
       resetSession()
       return
     }
-    if (sessionStartedAt) {
-      const elapsedSeconds = Math.max(1, sessionDurationSeconds - timeLeft)
-      const durationCompletedMinutes = Math.max(1, Math.round(elapsedSeconds / 60))
+
+    const elapsedSeconds = Math.max(1, sessionDurationSeconds - timeLeft)
+    const durationCompletedMinutes = Math.max(1, Math.round(elapsedSeconds / 60))
+
+    try {
+      const taskUpdate = await completeTaskFromFocus({
+        roomId: selectedRoomId,
+        taskId: selectedTask.taskId,
+        actorUserId: user.id,
+        outcome,
+        blockerNote: blockerNote.trim() || undefined,
+      })
+
       const entry: FocusSessionRecord = {
         id: `session-${Date.now()}`,
-        intention: intention.trim() || "Deep Work",
-        reflection: skipReflection ? "" : reflection.trim(),
+        intention: intention.trim() || selectedTask.title,
+        reflection: reflection.trim(),
+        taskId: selectedTask.taskId,
+        outcome,
+        followUpTaskId: taskUpdate.followUpTaskId,
         durationMinutes: durationCompletedMinutes,
         completedAt: new Date().toISOString(),
       }
@@ -414,17 +510,36 @@ function FocusPageContent() {
         sessionId: entry.id,
         intention: entry.intention,
         reflection: entry.reflection,
+        roomId: selectedRoomId,
+        taskId: entry.taskId,
+        outcome: entry.outcome,
+        blockerNote: blockerNote.trim() || undefined,
+        followUpTaskId: entry.followUpTaskId,
         durationMinutes: entry.durationMinutes,
         completedAt: entry.completedAt,
       })
 
-      if (roomId) {
-        await completeRoomFocus({
-          sessionToken,
-          roomId,
-          reflection: entry.reflection,
-        })
-      }
+      await completeRoomFocus({
+        sessionToken,
+        roomId: selectedRoomId,
+        reflection: entry.reflection,
+        outcome,
+        blockerNote: blockerNote.trim() || undefined,
+        followUpTaskId: entry.followUpTaskId,
+      })
+
+      toast("Focus session saved", {
+        description:
+          outcome === "done"
+            ? "Marked task complete."
+            : outcome === "blocked"
+              ? "Marked blocked and created follow-up task."
+              : "Updated task to in progress.",
+      })
+    } catch (error) {
+      toast("Unable to save focus outcome", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      })
     }
 
     resetSession()
@@ -441,7 +556,6 @@ function FocusPageContent() {
     >
       <AppSidebar variant="sidebar" />
       <SidebarInset className="relative overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
-
         {state === "RUNNING" && (
           <div className="pointer-events-none absolute inset-0 z-0">
             <div className="absolute inset-0 animate-pulse bg-cyan-500/5 duration-[6000ms]" />
@@ -452,26 +566,68 @@ function FocusPageContent() {
 
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 py-5 md:px-6 md:py-6 lg:pr-20">
           <div className="w-full max-w-xl text-center">
-
             {state === "START" && (
               <div className="animate-in fade-in zoom-in duration-700">
                 <div className="mx-auto mb-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-500">
                   <Timer className="size-7" />
                 </div>
                 <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-                  What are you focusing on right now?
+                  Start from one task
                 </h1>
                 <p className="mt-4 text-muted-foreground">
-                  Write one small, clear intention for this session.
-                  <br />
-                  <span className="text-sm opacity-80">No pressure, just something you&apos;d feel good finishing today.</span>
+                  Every session must be linked to a task so your outcome updates real work.
                 </p>
-                <div className="mt-10 flex flex-col gap-4">
+
+                <div className="mt-8 space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-left">
+                  <p className="text-xs font-medium uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
+                    Focus Task
+                  </p>
+                  {roomIdParam ? roomTasksQuery === undefined : assignedTasksQuery === undefined ? (
+                    <p className="text-sm text-muted-foreground">
+                      {roomIdParam ? "Loading room tasks..." : "Loading your assigned tasks..."}
+                    </p>
+                  ) : focusCandidates.length === 0 ? (
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      <p>No active assigned tasks found. Pick a task from a room board first.</p>
+                      <Link
+                        href="/dashboard"
+                        className="inline-flex text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                      >
+                        Go to dashboard
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {focusCandidates.slice(0, 6).map((task) => (
+                        <button
+                          key={`${task.roomId}-${task.taskId}`}
+                          type="button"
+                          onClick={() => {
+                            setSelectedTaskId(task.taskId)
+                            setIntention(task.title)
+                          }}
+                          className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            selectedTaskId === task.taskId
+                              ? "border-cyan-500/50 bg-cyan-500/20"
+                              : "border-cyan-500/20 bg-background/60 hover:border-cyan-500/40"
+                          }`}
+                        >
+                          <p className="font-medium">{task.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {task.roomName} • {task.status}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-col gap-4">
                   <Input
-                    placeholder="Today's focus:"
+                    placeholder="Session intention"
                     value={intention}
                     onChange={(e) => setIntention(e.target.value)}
-                    className="h-14 border-cyan-500/20 bg-background/50 text-center text-lg placeholder:text-muted-foreground/50 focus-visible:ring-cyan-500/30"
+                    className="h-12 border-cyan-500/20 bg-background/50 text-center text-base placeholder:text-muted-foreground/50 focus-visible:ring-cyan-500/30"
                   />
 
                   <div className="space-y-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-left">
@@ -494,27 +650,12 @@ function FocusPageContent() {
                         </button>
                       ))}
                     </div>
-                    <div className="flex items-center gap-2 pt-1">
-                      <span className="text-xs text-muted-foreground">Custom:</span>
-                      <Input
-                        type="number"
-                        min={MIN_DURATION}
-                        max={MAX_DURATION}
-                        value={durationMinutes}
-                        onChange={(event) => {
-                          const parsed = Number.parseInt(event.target.value, 10)
-                          if (Number.isNaN(parsed)) return
-                          setDurationMinutes(clampDuration(parsed))
-                        }}
-                        className="h-9 w-24 border-cyan-500/25 bg-background/70 focus-visible:ring-cyan-500/30"
-                      />
-                      <span className="text-xs text-muted-foreground">minutes</span>
-                    </div>
                   </div>
 
                   <Button
                     size="lg"
                     onClick={startSession}
+                    disabled={!selectedTask || !selectedRoomId}
                     className="h-14 bg-cyan-500 text-slate-950 transition-all hover:bg-cyan-400 hover:scale-[1.02] active:scale-[0.98]"
                   >
                     Start Focus Session
@@ -534,7 +675,10 @@ function FocusPageContent() {
                 </h1>
                 <div className="mt-10 space-y-2">
                   <p className="text-xl font-medium italic text-slate-800 dark:text-slate-200">
-                    &quot;{intention || "Deep Work"}&quot;
+                    &quot;{intention || selectedTask?.title || "Deep Work"}&quot;
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Task: {selectedTask?.title ?? "Selected task"}
                   </p>
                   <p className="text-muted-foreground">{ambientCopy}</p>
                 </div>
@@ -543,7 +687,7 @@ function FocusPageContent() {
                     onClick={finishSession}
                     className="text-sm font-medium text-muted-foreground transition-colors hover:text-cyan-600 dark:hover:text-cyan-400"
                   >
-                    Finish quietly
+                    End session
                   </button>
                 </div>
               </div>
@@ -554,34 +698,56 @@ function FocusPageContent() {
                 <div className="mx-auto mb-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-500">
                   <CheckCircle2 className="size-7" />
                 </div>
-                <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-                  What did you move forward during this session?
-                </h1>
-                <p className="mt-4 text-muted-foreground">Even small progress counts.</p>
-                <div className="mt-10 flex flex-col gap-4">
-                  <Input
-                    placeholder="Reflect on your progress..."
-                    value={reflection}
-                    onChange={(event) => setReflection(event.target.value)}
-                    className="h-14 border-cyan-500/20 bg-background/50 text-center text-lg placeholder:text-muted-foreground/50 focus-visible:ring-cyan-500/30"
-                  />
-                  <Button
-                    size="lg"
-                    onClick={() => saveSessionAndReset(false)}
-                    className="h-14 bg-cyan-500 text-slate-950 transition-all hover:bg-cyan-400"
-                  >
-                    Save and Finish
-                  </Button>
-                  <button
-                    onClick={() => saveSessionAndReset(true)}
-                    className="text-sm font-medium text-muted-foreground transition-colors hover:text-cyan-600"
-                  >
-                    Skip reflection
-                  </button>
-                </div>
-                <p className="mt-12 text-sm text-muted-foreground/60">
-                  Session complete. Nice work showing up.
+                <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">What changed?</h1>
+                <p className="mt-4 text-muted-foreground">
+                  Pick an outcome. We will update your linked task automatically.
                 </p>
+
+                <div className="mt-8 grid gap-2 text-left sm:grid-cols-3">
+                  {[
+                    { key: "done", label: "Done" },
+                    { key: "progress", label: "Progress made" },
+                    { key: "blocked", label: "Blocked" },
+                  ].map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setOutcome(item.key as FocusOutcome)}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                        outcome === item.key
+                          ? "border-cyan-500/50 bg-cyan-500/20"
+                          : "border-cyan-500/20 bg-background/60"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {outcome === "blocked" ? (
+                  <Input
+                    placeholder="What blocked you?"
+                    value={blockerNote}
+                    onChange={(event) => setBlockerNote(event.target.value)}
+                    className="mt-4 h-12 border-cyan-500/20 bg-background/50 text-center text-base placeholder:text-muted-foreground/50 focus-visible:ring-cyan-500/30"
+                  />
+                ) : null}
+
+                <Input
+                  placeholder="Optional reflection"
+                  value={reflection}
+                  onChange={(event) => setReflection(event.target.value)}
+                  className="mt-4 h-12 border-cyan-500/20 bg-background/50 text-center text-base placeholder:text-muted-foreground/50 focus-visible:ring-cyan-500/30"
+                />
+                <Button
+                  size="lg"
+                  onClick={() => {
+                    void saveSessionAndReset()
+                  }}
+                  className="mt-4 h-14 w-full bg-cyan-500 text-slate-950 transition-all hover:bg-cyan-400"
+                >
+                  Save Outcome
+                </Button>
               </div>
             )}
 
@@ -603,9 +769,9 @@ function FocusPageContent() {
                       <p className="mt-1 text-xs text-muted-foreground">
                         {session.durationMinutes} min • {formatSessionTime(session.completedAt)}
                       </p>
-                      {session.reflection ? (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          &quot;{session.reflection}&quot;
+                      {session.outcome ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Outcome: {session.outcome}
                         </p>
                       ) : null}
                     </li>
@@ -617,11 +783,11 @@ function FocusPageContent() {
             {state !== "RUNNING" && (
               <div className="mt-6 rounded-2xl border border-cyan-500/20 bg-background/60 p-4 text-left">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
-                  Productivity Snapshot
+                  Focus Impact Today
                 </h2>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-                    <p className="text-xs text-muted-foreground">Today</p>
+                    <p className="text-xs text-muted-foreground">Focused time</p>
                     <p className="mt-1 text-xl font-semibold">
                       {progressStats.todayMinutes} min
                     </p>
@@ -630,43 +796,18 @@ function FocusPageContent() {
                     </p>
                   </div>
                   <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-                    <p className="text-xs text-muted-foreground">Last 7 days</p>
-                    <p className="mt-1 text-xl font-semibold">
-                      {progressStats.weekMinutes} min
-                    </p>
-                    <p className="text-xs text-muted-foreground">Total focused work</p>
+                    <p className="text-xs text-muted-foreground">Tasks moved</p>
+                    <p className="mt-1 text-xl font-semibold">{progressStats.movedTasksToday}</p>
+                    <p className="text-xs text-muted-foreground">Done or progress</p>
                   </div>
                   <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-                    <p className="text-xs text-muted-foreground">Latest done</p>
-                    <p className="mt-1 line-clamp-2 text-sm font-medium">
-                      {sessionHistory[0]?.intention ?? "No sessions yet"}
-                    </p>
+                    <p className="text-xs text-muted-foreground">Blockers raised</p>
+                    <p className="mt-1 text-xl font-semibold">{progressStats.blockersRaisedToday}</p>
+                    <p className="text-xs text-muted-foreground">Auto follow-ups created</p>
                   </div>
                 </div>
-
-                {progressStats.todaySessions.length > 0 ? (
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700/80 dark:text-cyan-300/80">
-                      Today&apos;s Completed Work
-                    </p>
-                    <ul className="mt-2 space-y-2">
-                      {progressStats.todaySessions.slice(0, 5).map((session) => (
-                        <li
-                          key={session.id}
-                          className="rounded-md border border-cyan-500/15 bg-background/70 px-3 py-2 text-sm"
-                        >
-                          <span className="font-medium">{session.intention}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            ({session.durationMinutes} min)
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
               </div>
             )}
-
           </div>
         </div>
       </SidebarInset>
