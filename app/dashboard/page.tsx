@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
+import { notificationsApi } from "@/lib/convex-notifications-api"
 import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import {
@@ -95,6 +96,20 @@ type RoomActivityEventDoc = {
   actorName: string
 }
 
+type ViewerNotificationResult = {
+  unreadCount: number
+  items: Array<{
+    id: string
+    type: "task_assigned"
+    title: string
+    message: string
+    roomId?: string
+    taskId?: string
+    readAt: number | null
+    createdAt: number
+  }>
+}
+
 function formatPlanDue(dueAt?: number) {
   if (!dueAt) return "No deadline"
   const now = Date.now()
@@ -142,6 +157,12 @@ function startOfDay(timestamp: number) {
 
 function dayIndex(windowStart: number, timestamp: number) {
   return Math.floor((timestamp - windowStart) / (24 * 60 * 60 * 1000))
+}
+
+function greetingForHour(hour: number) {
+  if (hour < 12) return "Good morning"
+  if (hour < 17) return "Good afternoon"
+  return "Good evening"
 }
 
 function formatRelativeTime(timestamp: number, now: number) {
@@ -214,6 +235,11 @@ export default function Page() {
     focusSessionsApi.list,
     sessionToken ? { sessionToken } : "skip"
   ) as FocusSessionDoc[] | undefined
+  const notificationsQuery = useQuery(
+    notificationsApi.listByViewer,
+    sessionToken ? { sessionToken, limit: 12 } : "skip"
+  ) as ViewerNotificationResult | undefined
+  const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
   const recentActivityQuery = useQuery(
     roomTasksApi.listRecentActivityByUser,
     userId ? { userId, limit: 12 } : "skip"
@@ -431,6 +457,19 @@ export default function Page() {
 
   const focusedHours = Number((analytics.focusMinutesToday / 60).toFixed(1))
   const focusPercent = Math.min(100, Math.round((focusedHours / focusGoalHours) * 100))
+  const greeting = React.useMemo(() => {
+    const now = new Date(nowTimestamp)
+    return {
+      text: greetingForHour(now.getHours()),
+      context: now.toLocaleString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    }
+  }, [nowTimestamp])
   const quickActions = React.useMemo(
     () => [
       {
@@ -537,7 +576,20 @@ export default function Page() {
     const roomTasksHref = latestJoinedRoomId
       ? `/dashboard/rooms/${latestJoinedRoomId}/tasks`
       : "/dashboard"
+    const unreadAssignments = notificationsQuery?.items.filter(
+      (item) => item.type === "task_assigned" && !item.readAt
+    ).length ?? 0
     return [
+      {
+        label: "Assigned to you",
+        value: unreadAssignments,
+        hint:
+          unreadAssignments > 0
+            ? "New tasks are waiting for your review."
+            : "No new assignments.",
+        href: `${roomTasksHref}?status=open`,
+        disabled: !latestJoinedRoomId,
+      },
       {
         label: "Blocked tasks",
         value: blockedCount,
@@ -553,14 +605,14 @@ export default function Page() {
         disabled: !latestJoinedRoomId,
       },
       {
-        label: "Mentions",
-        value: 0,
-        hint: "Coming soon",
+        label: "Unread alerts",
+        value: notificationsQuery?.unreadCount ?? 0,
+        hint: "Includes assignment alerts.",
         href: "/dashboard/recent-activity",
         disabled: false,
       },
     ]
-  }, [assignedTasksQuery, latestJoinedRoomId, nowTimestamp])
+  }, [assignedTasksQuery, latestJoinedRoomId, notificationsQuery, nowTimestamp])
   const recentActivityItems = React.useMemo((): ActivityItem[] => {
     if (!recentActivityQuery) return []
     return recentActivityQuery.slice(0, 8).map((event) => ({
@@ -686,14 +738,18 @@ export default function Page() {
           <div className="mx-auto w-full max-w-6xl">
             <div className="mb-6">
               <h1 className="bg-linear-to-r from-teal-700 via-cyan-700 to-teal-500 bg-clip-text text-4xl font-semibold tracking-tight text-transparent dark:from-cyan-200 dark:via-teal-200 dark:to-cyan-400 md:text-5xl">
-                Good afternoon, {firstName}.
+                {greeting.text}, {firstName}.
               </h1>
               <p className="mt-2 text-muted-foreground">
                 Ready for focused collaboration? You have {analytics.roomCount} rooms active today.
               </p>
+              <p className="mt-1 text-xs text-muted-foreground">{greeting.context}</p>
             </div>
 
-            <section className="mb-5 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur">
+            <section
+              id="command-center"
+              className="mb-5 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur"
+            >
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h2 className="text-base font-semibold">Today Command Center</h2>
                 <Badge variant="outline" className="text-xs">
@@ -735,6 +791,50 @@ export default function Page() {
                     </Link>
                   ))}
                 </div>
+              </div>
+              <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2.5">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Recent notifications
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={!sessionToken || !notificationsQuery || notificationsQuery.unreadCount === 0}
+                    onClick={() => {
+                      if (!sessionToken) return
+                      void markAllNotificationsRead({ sessionToken })
+                    }}
+                  >
+                    Mark all read
+                  </Button>
+                </div>
+                {!notificationsQuery ? (
+                  <p className="text-xs text-muted-foreground">Loading notifications...</p>
+                ) : notificationsQuery.items.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No notifications yet.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {notificationsQuery.items.slice(0, 3).map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-background/70 px-2.5 py-2 text-xs"
+                      >
+                        <span className="truncate">{item.message}</span>
+                        {!item.readAt ? (
+                          <Badge variant="secondary">new</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {formatRelativeTime(item.createdAt, nowTimestamp)}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </section>
 
@@ -850,7 +950,10 @@ export default function Page() {
               </div>
             </div>
 
-            <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
+            <section
+              id="today-plan"
+              className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur"
+            >
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Today Plan</h2>
@@ -948,6 +1051,62 @@ export default function Page() {
                       </p>
                     </li>
                   ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Rooms Overview</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Your active collaboration rooms.
+                  </p>
+                </div>
+                <Link
+                  href="/dashboard"
+                  className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                >
+                  Refresh
+                </Link>
+              </div>
+              {roomDocs === undefined ? (
+                <p className="text-sm text-muted-foreground">Loading rooms...</p>
+              ) : roomDocs.filter((room) => joinedRoomIds.includes(room._id)).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No rooms joined yet. Create or join a room to collaborate.
+                </p>
+              ) : (
+                <ul className="grid gap-2 sm:grid-cols-2">
+                  {roomDocs
+                    .filter((room) => joinedRoomIds.includes(room._id))
+                    .sort((left, right) => right.createdAt - left.createdAt)
+                    .map((room) => (
+                      <li
+                        key={room._id}
+                        className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">{room.name}</p>
+                          <Badge variant="outline">{room.membersCount} members</Badge>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <Link
+                            href={`/dashboard/rooms/${room._id}`}
+                            className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                          >
+                            Open Room
+                          </Link>
+                          <span className="text-xs text-muted-foreground">•</span>
+                          <Link
+                            href={`/dashboard/rooms/${room._id}/tasks`}
+                            className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                          >
+                            View Tasks
+                          </Link>
+                        </div>
+                      </li>
+                    ))}
                 </ul>
               )}
             </section>

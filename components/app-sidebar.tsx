@@ -6,8 +6,9 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   BarChart3,
+  Bell,
   BookmarkCheck,
-  Clock3,
+  ClipboardList,
   Command,
   Sparkles,
   Timer,
@@ -44,9 +45,14 @@ const data = {
       icon: Command,
     },
     {
-      title: "Recent Activity",
-      url: "/dashboard/recent-activity",
-      icon: Clock3,
+      title: "Today Plan",
+      url: "/dashboard#today-plan",
+      icon: ClipboardList,
+    },
+    {
+      title: "Notifications",
+      url: "/dashboard#command-center",
+      icon: Bell,
     },
     {
       title: "Saved Tasks",
@@ -95,6 +101,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const router = useRouter()
   const { user, signOut } = useAuth()
   const pathname = usePathname()
+  const [hash, setHash] = React.useState("")
   const userId = user?.id
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
   const pinnedRoomIdsQuery = useQuery(
@@ -109,6 +116,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     [pinnedRoomIdsQuery, roomDocs]
   )
   const recentRooms = React.useMemo(() => (roomDocs ?? []).slice(0, 3), [roomDocs])
+
+  React.useEffect(() => {
+    const readHash = () => {
+      if (typeof window === "undefined") return
+      setHash(window.location.hash || "")
+    }
+    readHash()
+    window.addEventListener("hashchange", readHash)
+    return () => window.removeEventListener("hashchange", readHash)
+  }, [])
 
   async function openRoom(roomId: Id<"rooms">) {
     router.push(`/dashboard/rooms/${roomId}`)
@@ -126,10 +143,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const isNavItemActive = (title: string, url: string) => {
     const routePath = url.split("#")[0]
     if (title === "My Rooms") {
-      return pathname === "/dashboard"
+      return pathname === "/dashboard" && !hash
     }
-    if (title === "Recent Activity") {
-      return pathname === "/dashboard/recent-activity"
+    if (title === "Today Plan") {
+      return pathname === "/dashboard" && hash === "#today-plan"
+    }
+    if (title === "Notifications") {
+      return pathname === "/dashboard" && hash === "#command-center"
     }
     if (title === "Saved Tasks") {
       return pathname === "/dashboard/saved-tasks"

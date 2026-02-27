@@ -63,6 +63,19 @@ export default defineSchema({
   })
     .index("by_tokenHash", ["tokenHash"])
     .index("by_user", ["userId"]),
+  userNotifications: defineTable({
+    userId: v.id("users"),
+    type: v.union(v.literal("task_assigned")),
+    title: v.string(),
+    message: v.string(),
+    roomId: v.optional(v.id("rooms")),
+    taskId: v.optional(v.string()),
+    readAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_user_createdAt", ["userId", "createdAt"])
+    .index("by_user_readAt", ["userId", "readAt"])
+    .index("by_room_task", ["roomId", "taskId"]),
   rooms: defineTable({
     name: v.string(),
     description: v.string(),
