@@ -53,6 +53,16 @@ export default defineSchema({
   })
     .index("by_tokenHash", ["tokenHash"])
     .index("by_user", ["userId"]),
+  passwordResetTokens: defineTable({
+    userId: v.id("users"),
+    tokenHash: v.string(),
+    email: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+  })
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_user", ["userId"]),
   rooms: defineTable({
     name: v.string(),
     description: v.string(),

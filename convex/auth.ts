@@ -5,6 +5,7 @@ import { internal } from "./_generated/api"
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const VERIFICATION_TTL_MS = 1000 * 60 * 60 * 24
+const PASSWORD_RESET_TTL_MS = 1000 * 60 * 30
 const AVATAR_KEYS = [
   "avatar-1",
   "avatar-2",
@@ -157,6 +158,36 @@ async function createVerificationToken(
   return verificationLink
 }
 
+async function createPasswordResetToken(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  siteUrl: string
+) {
+  const now = Date.now()
+  const rawToken = randomToken(32)
+  const tokenHash = await sha256(rawToken)
+
+  await ctx.db.insert("passwordResetTokens", {
+    userId: user._id,
+    tokenHash,
+    email: user.email,
+    createdAt: now,
+    expiresAt: now + PASSWORD_RESET_TTL_MS,
+    usedAt: undefined,
+  })
+
+  const baseUrl = siteUrl.trim().replace(/\/+$/, "")
+  const resetLink = `${baseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`
+
+  await ctx.scheduler.runAfter(0, internal.email.sendPasswordResetEmail, {
+    email: user.email,
+    name: user.name,
+    resetLink,
+  })
+
+  return resetLink
+}
+
 async function requireUserBySessionToken(ctx: MutationCtx, sessionToken: string) {
   const tokenHash = await sha256(sessionToken)
   const session = await ctx.db
@@ -221,8 +252,8 @@ export const signUp = mutation({
       .withIndex("by_email", (query) => query.eq("email", email))
       .first()
 
-    if (existing && existing.emailVerifiedAt) {
-      throw new Error("An account with this email already exists.")
+    if (existing) {
+      throw new Error("An account with this email already exists. Use another email or sign in.")
     }
 
     const now = Date.now()
@@ -230,27 +261,15 @@ export const signUp = mutation({
     const passwordHash = await hashPassword(password, passwordSalt)
     const avatarKey = normalizeAvatarKey(args.avatarKey)
 
-    let userId: Id<"users">
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        name,
-        passwordSalt,
-        passwordHash,
-        avatarKey: existing.avatarKey ?? avatarKey,
-        updatedAt: now,
-      })
-      userId = existing._id
-    } else {
-      userId = await ctx.db.insert("users", {
-        email,
-        name,
-        avatarKey,
-        passwordHash,
-        passwordSalt,
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
+    const userId: Id<"users"> = await ctx.db.insert("users", {
+      email,
+      name,
+      avatarKey,
+      passwordHash,
+      passwordSalt,
+      createdAt: now,
+      updatedAt: now,
+    })
 
     const user = await ctx.db.get(userId)
     if (!user) {
@@ -281,15 +300,91 @@ export const resendVerificationEmail = mutation({
       .withIndex("by_email", (query) => query.eq("email", email))
       .first()
 
-    if (!user) {
-      throw new Error("No account found for this email.")
-    }
-    if (user.emailVerifiedAt) {
-      throw new Error("This email is already verified.")
+    if (!user || user.emailVerifiedAt) {
+      return { verificationLink: "" }
     }
 
     const verificationLink = await createVerificationToken(ctx, user, args.siteUrl)
     return { verificationLink }
+  },
+})
+
+export const requestPasswordReset = mutation({
+  args: {
+    email: v.string(),
+    siteUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const email = normalizeEmail(args.email)
+    if (!email) {
+      throw new Error("Email is required.")
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (query) => query.eq("email", email))
+      .first()
+
+    if (user && user.emailVerifiedAt) {
+      await createPasswordResetToken(ctx, user, args.siteUrl)
+    }
+
+    return {
+      message:
+        "If this email is registered, we sent a password reset link.",
+    }
+  },
+})
+
+export const resetPassword = mutation({
+  args: {
+    token: v.string(),
+    newPassword: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const tokenHash = await sha256(args.token.trim())
+    const resetToken = await ctx.db
+      .query("passwordResetTokens")
+      .withIndex("by_tokenHash", (query) => query.eq("tokenHash", tokenHash))
+      .first()
+
+    if (!resetToken || resetToken.usedAt) {
+      throw new Error("This password reset link is invalid.")
+    }
+    if (resetToken.expiresAt <= Date.now()) {
+      throw new Error("This password reset link has expired.")
+    }
+
+    const user = await ctx.db.get(resetToken.userId)
+    if (!user) {
+      throw new Error("User not found.")
+    }
+    if (args.newPassword.trim().length < 6) {
+      throw new Error("Password must be at least 6 characters.")
+    }
+
+    const now = Date.now()
+    const passwordSalt = randomToken(16)
+    const passwordHash = await hashPassword(args.newPassword, passwordSalt)
+
+    await ctx.db.patch(user._id, {
+      passwordSalt,
+      passwordHash,
+      updatedAt: now,
+    })
+    await ctx.db.patch(resetToken._id, {
+      usedAt: now,
+    })
+
+    const existingSessions = await ctx.db
+      .query("authSessions")
+      .withIndex("by_user", (query) => query.eq("userId", user._id))
+      .collect()
+    for (const session of existingSessions) {
+      await ctx.db.delete(session._id)
+    }
+
+    return { reset: true }
   },
 })
 

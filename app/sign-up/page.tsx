@@ -19,6 +19,7 @@ export default function SignUpPage() {
   const [password, setPassword] = React.useState("")
   const [avatarKey, setAvatarKey] = React.useState("avatar-1")
   const [error, setError] = React.useState<string | null>(null)
+  const [notice, setNotice] = React.useState<string | null>(null)
   const [verificationLink, setVerificationLink] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
 
@@ -32,6 +33,7 @@ export default function SignUpPage() {
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setNotice(null)
     setVerificationLink(null)
     setIsSubmitting(true)
     try {
@@ -42,8 +44,14 @@ export default function SignUpPage() {
         avatarKey: normalizeAvatarKey(avatarKey),
       })
       setVerificationLink(result.verificationLink)
+      setNotice("Account created. Verify your email to continue.")
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Unable to sign up.")
+      const message = submitError instanceof Error ? submitError.message : "Unable to sign up."
+      if (message.toLowerCase().includes("already exists")) {
+        setError("This email is already in use. Use another email or sign in.")
+      } else {
+        setError(message)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -120,6 +128,7 @@ export default function SignUpPage() {
               <AvatarPicker value={avatarKey} onChange={setAvatarKey} />
             </div>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
+            {notice ? <p className="text-sm text-emerald-600">{notice}</p> : null}
             <Button
               type="submit"
               className="w-full bg-cyan-500 text-slate-950 hover:bg-cyan-400"
