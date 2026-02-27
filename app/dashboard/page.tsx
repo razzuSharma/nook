@@ -17,8 +17,6 @@ import {
 } from "lucide-react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
-import { ActivityFeed } from "@/components/recent-activity/activity-feed"
-import type { ActivityItem } from "@/components/recent-activity/data"
 import { SiteHeader } from "@/components/site-header"
 import { useAuth } from "@/components/providers/auth-provider"
 import { Input } from "@/components/ui/input"
@@ -34,7 +32,6 @@ import {
 } from "@/components/ui/dialog"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
-import { notificationsApi } from "@/lib/convex-notifications-api"
 import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import {
@@ -53,8 +50,13 @@ const APP_BOOT_TIME = Date.now()
 type RoomListItem = {
   _id: Id<"rooms">
   name: string
+  description?: string
+  mode?: string
+  joinCode?: string
   createdAt: number
   membersCount: number
+  membersMax?: number
+  icon?: RoomIconKey
 }
 
 type AssignedRoomTask = {
@@ -87,28 +89,6 @@ type FocusPresenceDoc = {
   userId: string
   status: "idle" | "focusing" | "break" | "done"
   endsAt: number | null
-}
-
-type RoomActivityEventDoc = {
-  id: string
-  taskTitle: string
-  type: string
-  createdAt: number
-  actorName: string
-}
-
-type ViewerNotificationResult = {
-  unreadCount: number
-  items: Array<{
-    id: string
-    type: "task_assigned"
-    title: string
-    message: string
-    roomId?: string
-    taskId?: string
-    readAt: number | null
-    createdAt: number
-  }>
 }
 
 type RoomAccess = "public" | "private" | "invite_only"
@@ -210,15 +190,6 @@ function formatRelativeTime(timestamp: number, now: number) {
   return `${days}d ago`
 }
 
-function initialsFromName(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase()
-}
-
 function slugifyRoomName(name: string) {
   const slug = name
     .toLowerCase()
@@ -273,6 +244,7 @@ export default function Page() {
     [joinedRoomIdsQuery]
   )
   const createQuickTask = useMutation(roomTasksApi.createQuickTask)
+  const joinRoomByCode = useMutation(roomsApi.joinByCode)
   const createRoomInDb = useMutation(roomsApi.create)
   const assignedTasksQuery = useQuery(
     roomTasksApi.listAssignedByUser,
@@ -282,15 +254,6 @@ export default function Page() {
     focusSessionsApi.list,
     sessionToken ? { sessionToken } : "skip"
   ) as FocusSessionDoc[] | undefined
-  const notificationsQuery = useQuery(
-    notificationsApi.listByViewer,
-    sessionToken ? { sessionToken, limit: 12 } : "skip"
-  ) as ViewerNotificationResult | undefined
-  const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
-  const recentActivityQuery = useQuery(
-    roomTasksApi.listRecentActivityByUser,
-    userId ? { userId, limit: 12 } : "skip"
-  ) as RoomActivityEventDoc[] | undefined
   const [roomTasksByRoom, setRoomTasksByRoom] = React.useState<
     Record<string, RoomTaskMetricDoc[]>
   >({})
@@ -314,6 +277,8 @@ export default function Page() {
   const [roomEmoji, setRoomEmoji] = React.useState<string>("🔥")
   const [roomIcon, setRoomIcon] = React.useState<RoomIconKey>("sparkles")
   const [isCreatingRoom, setIsCreatingRoom] = React.useState(false)
+  const [joinRoomCode, setJoinRoomCode] = React.useState("")
+  const [joiningRoom, setJoiningRoom] = React.useState(false)
   const [statusEntries, setStatusEntries] = React.useState<
     Array<{ id: string; text: string; createdAt: number }>
   >([])
@@ -429,6 +394,13 @@ export default function Page() {
     !isCreatingRoom
   const roomDescriptionCount = roomDescription.trim().length
   const roomSlugPreview = slugifyRoomName(roomName)
+  const joinedRooms = React.useMemo(
+    () =>
+      (roomDocs ?? [])
+        .filter((room) => joinedRoomIds.includes(room._id))
+        .sort((left, right) => right.createdAt - left.createdAt),
+    [joinedRoomIds, roomDocs]
+  )
 
   const analytics = React.useMemo(() => {
     const now = nowTimestamp
@@ -601,23 +573,6 @@ export default function Page() {
       }),
     }
   }, [nowTimestamp])
-  const quickActions = React.useMemo(
-    () => [
-      {
-        label: "Open focus mode",
-        href: latestJoinedRoomId ? `/dashboard/rooms/${latestJoinedRoomId}/tasks` : "/dashboard",
-      },
-      {
-        label: "Review timeline",
-        href: "/dashboard/recent-activity",
-      },
-      {
-        label: "Check saved tasks",
-        href: "/dashboard/saved-tasks",
-      },
-    ],
-    [latestJoinedRoomId]
-  )
   const metrics = React.useMemo(
     () => [
       {
@@ -697,67 +652,6 @@ export default function Page() {
       .map((taskId) => byId.get(taskId))
       .filter((task): task is AssignedRoomTask => Boolean(task))
   }, [rankedAssignedTasks, todayPlanOrderIds, todayPlanPinnedIds])
-  const notificationItems = React.useMemo(() => {
-    const blockedCount = (assignedTasksQuery ?? []).filter(
-      (task) => task.status === "blocked"
-    ).length
-    const overdueCount = (assignedTasksQuery ?? []).filter(
-      (task) => task.status !== "completed" && Boolean(task.dueAt && task.dueAt < nowTimestamp)
-    ).length
-    const roomTasksHref = latestJoinedRoomId
-      ? `/dashboard/rooms/${latestJoinedRoomId}/tasks`
-      : "/dashboard"
-    const unreadAssignments = notificationsQuery?.items.filter(
-      (item) => item.type === "task_assigned" && !item.readAt
-    ).length ?? 0
-    return [
-      {
-        label: "Assigned to you",
-        value: unreadAssignments,
-        hint:
-          unreadAssignments > 0
-            ? "New tasks are waiting for your review."
-            : "No new assignments.",
-        href: `${roomTasksHref}?status=open`,
-        disabled: !latestJoinedRoomId,
-      },
-      {
-        label: "Blocked tasks",
-        value: blockedCount,
-        hint: blockedCount > 0 ? "Review blockers and assign an unblock owner." : "All clear.",
-        href: `${roomTasksHref}?status=blocked`,
-        disabled: !latestJoinedRoomId,
-      },
-      {
-        label: "Overdue tasks",
-        value: overdueCount,
-        hint: overdueCount > 0 ? "Rescope deadlines in room tasks." : "Deadlines on track.",
-        href: `${roomTasksHref}?due=overdue&status=open`,
-        disabled: !latestJoinedRoomId,
-      },
-      {
-        label: "Unread alerts",
-        value: notificationsQuery?.unreadCount ?? 0,
-        hint: "Includes assignment alerts.",
-        href: "/dashboard/recent-activity",
-        disabled: false,
-      },
-    ]
-  }, [assignedTasksQuery, latestJoinedRoomId, notificationsQuery, nowTimestamp])
-  const recentActivityItems = React.useMemo((): ActivityItem[] => {
-    if (!recentActivityQuery) return []
-    return recentActivityQuery.slice(0, 8).map((event) => ({
-      id: String(event.id),
-      name: event.actorName,
-      initials: initialsFromName(event.actorName),
-      task: event.taskTitle,
-      activity:
-        event.type === "focus_outcome"
-          ? "updated from focus:"
-          : event.type.replaceAll("_", " "),
-      time: formatRelativeTime(event.createdAt, nowTimestamp),
-    }))
-  }, [recentActivityQuery, nowTimestamp])
 
   React.useEffect(() => {
     const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
@@ -881,6 +775,35 @@ export default function Page() {
     }
   }
 
+  async function submitJoinByCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!userId || joiningRoom) return
+    const code = joinRoomCode.trim().toUpperCase()
+    if (!code) return
+    try {
+      setJoiningRoom(true)
+      const result = await joinRoomByCode({
+        code,
+        userId,
+      })
+      setJoinRoomCode("")
+      router.push(`/dashboard/rooms/${result.roomId}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to join room.")
+    } finally {
+      setJoiningRoom(false)
+    }
+  }
+
+  async function copyJoinCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code)
+      toast.success("Room code copied.")
+    } catch {
+      toast.error("Unable to copy code.")
+    }
+  }
+
   return (
     <SidebarProvider
       style={
@@ -906,109 +829,115 @@ export default function Page() {
             </div>
 
             <section
-              id="command-center"
-              className="mb-5 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur"
+              id="rooms-section"
+              className="mb-6 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur"
             >
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">Today Command Center</h2>
-                <Badge variant="outline" className="text-xs">
-                  {isDashboardLoading ? "Syncing data" : "Live"}
-                </Badge>
+                <h2 className="text-lg font-semibold">Your Rooms</h2>
+                <a
+                  href="/dashboard#rooms-section"
+                  className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                >
+                  View All
+                </a>
               </div>
-              <div className="grid gap-3 lg:grid-cols-[1.15fr_1fr]">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {isDashboardLoading
-                    ? Array.from({ length: 3 }, (_, index) => (
-                        <div
-                          key={`action-skeleton-${index}`}
-                          className="h-14 animate-pulse rounded-xl border border-cyan-500/20 bg-cyan-500/10"
-                        />
-                      ))
-                    : quickActions.map((action) => (
-                        <Link
-                          key={action.label}
-                          href={action.href}
-                          className="flex items-center justify-between rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm font-medium transition-colors hover:bg-cyan-500/10"
-                        >
-                          {action.label}
-                          <ArrowRight className="size-4 text-cyan-700 dark:text-cyan-300" />
-                        </Link>
-                      ))}
+              {isDashboardLoading ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div
+                      key={`room-card-skeleton-${index}`}
+                      className="h-36 animate-pulse rounded-xl border border-cyan-500/20 bg-cyan-500/10"
+                    />
+                  ))}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
-                  {isDashboardLoading
-                    ? Array.from({ length: 4 }, (_, index) => (
-                        <div
-                          key={`metric-skeleton-${index}`}
-                          className="h-16 animate-pulse rounded-lg border border-cyan-500/20 bg-cyan-500/10"
-                        />
-                      ))
-                    : notificationItems.map((item) => (
-                        <Link
-                          key={item.label}
-                          href={item.href}
-                          aria-disabled={item.disabled}
-                          className={`rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 transition-colors ${
-                            item.disabled
-                              ? "pointer-events-none opacity-60"
-                              : "hover:bg-cyan-500/10"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              {item.label}
-                            </p>
-                            <Badge variant="secondary">{item.value}</Badge>
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">{item.hint}</p>
-                        </Link>
-                      ))}
-                </div>
-              </div>
-              <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2.5">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Recent notifications
+              ) : joinedRooms.length === 0 ? (
+                <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+                  <p className="text-sm text-muted-foreground">
+                    You have no joined rooms yet. Create a room or join with a shared code.
                   </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={!sessionToken || !notificationsQuery || notificationsQuery.unreadCount === 0}
-                    onClick={() => {
-                      if (!sessionToken) return
-                      void markAllNotificationsRead({ sessionToken })
-                    }}
-                  >
-                    Mark all read
-                  </Button>
                 </div>
-                {!notificationsQuery ? (
-                  <p className="text-xs text-muted-foreground">Loading notifications...</p>
-                ) : notificationsQuery.items.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No notifications yet.
-                  </p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {notificationsQuery.items.slice(0, 3).map((item) => (
-                      <li
-                        key={item.id}
-                        className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/20 bg-background/70 px-2.5 py-2 text-xs"
-                      >
-                        <span className="truncate">{item.message}</span>
-                        {!item.readAt ? (
-                          <Badge variant="secondary">new</Badge>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            {formatRelativeTime(item.createdAt, nowTimestamp)}
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {joinedRooms.slice(0, 3).map((room) => (
+                    <article
+                      key={room._id}
+                      className="rounded-xl border border-cyan-500/25 bg-cyan-500/[0.07] p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-base font-semibold">{room.name}</p>
+                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            {room.description || "Focused collaboration room."}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] uppercase">
+                          {room.mode || "ROOM"}
+                        </Badge>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          {room.membersCount}/{room.membersMax ?? 30} Members
+                        </p>
+                        <Link
+                          href={`/dashboard/rooms/${room._id}`}
+                          className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                        >
+                          Open
+                        </Link>
+                      </div>
+                      {room.joinCode ? (
+                        <div className="mt-2 flex items-center justify-between rounded-md border border-cyan-500/20 bg-background/70 px-2 py-1.5">
+                          <span className="font-mono text-[11px] text-muted-foreground">
+                            {room.joinCode}
                           </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={() => {
+                              void copyJoinCode(room.joinCode as string)
+                            }}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                  <button
+                    type="button"
+                    className="group flex min-h-36 flex-col justify-center rounded-xl border border-dashed border-cyan-500/30 bg-cyan-500/5 p-3 text-left transition-colors hover:bg-cyan-500/10"
+                    onClick={() => setCreateRoomOpen(true)}
+                  >
+                    <p className="text-base font-semibold">Create a new room</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Start a focused collaboration session.
+                    </p>
+                  </button>
+                </div>
+              )}
+              <form
+                onSubmit={(event) => {
+                  void submitJoinByCode(event)
+                }}
+                className="mt-3 flex flex-col gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-2.5 sm:flex-row sm:items-center"
+              >
+                <Input
+                  value={joinRoomCode}
+                  onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())}
+                  placeholder="Join with code (NOOK-7F2A)"
+                  className="h-8 border-cyan-500/25 bg-background/70"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!joinRoomCode.trim() || joiningRoom || !userId}
+                  className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                >
+                  {joiningRoom ? "Joining..." : "Join Room"}
+                </Button>
+              </form>
             </section>
 
             <form
@@ -1259,83 +1188,6 @@ export default function Page() {
                 </ul>
               )}
             </section>
-
-            <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold">Rooms Overview</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Your active collaboration rooms.
-                  </p>
-                </div>
-                <Link
-                  href="/dashboard"
-                  className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
-                >
-                  Refresh
-                </Link>
-              </div>
-              {roomDocs === undefined ? (
-                <p className="text-sm text-muted-foreground">Loading rooms...</p>
-              ) : roomDocs.filter((room) => joinedRoomIds.includes(room._id)).length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No rooms joined yet. Create or join a room to collaborate.
-                </p>
-              ) : (
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {roomDocs
-                    .filter((room) => joinedRoomIds.includes(room._id))
-                    .sort((left, right) => right.createdAt - left.createdAt)
-                    .map((room) => (
-                      <li
-                        key={room._id}
-                        className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-medium">{room.name}</p>
-                          <Badge variant="outline">{room.membersCount} members</Badge>
-                        </div>
-                        <div className="mt-2 flex items-center gap-2">
-                          <Link
-                            href={`/dashboard/rooms/${room._id}`}
-                            className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
-                          >
-                            Open Room
-                          </Link>
-                          <span className="text-xs text-muted-foreground">•</span>
-                          <Link
-                            href={`/dashboard/rooms/${room._id}/tasks`}
-                            className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
-                          >
-                            View Tasks
-                          </Link>
-                        </div>
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </section>
-
-            <div className="mt-10">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-2xl font-semibold">Recent Activity</h2>
-                <a
-                  href="/dashboard/recent-activity"
-                  className="text-sm font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300 dark:hover:text-cyan-200"
-                >
-                  View Timeline
-                </a>
-              </div>
-              <ActivityFeed
-                items={recentActivityItems}
-                isLoading={recentActivityQuery === undefined}
-                suggestions={[
-                  "Enter your first room ->",
-                  "Invite a teammate ->",
-                  "Try Deep Work Mode ->",
-                ]}
-              />
-            </div>
 
           </div>
         </div>
