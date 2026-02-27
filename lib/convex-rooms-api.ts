@@ -49,6 +49,7 @@ type RoomsApiShape = {
       description: string
       mode: string
       access: "public" | "private" | "invite_only"
+      icon?: "code" | "rocket" | "cpu" | "sparkles"
       membersMax: number
       userId: string
     },

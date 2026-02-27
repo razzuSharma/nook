@@ -5,6 +5,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { ChevronRight, Flame, Plus } from "lucide-react"
 import { useRouter } from "next/navigation"
+import * as React from "react"
 
 export function SiteHeader({
   currentPage = "Home Dashboard",
@@ -17,6 +18,38 @@ export function SiteHeader({
 }) {
   const router = useRouter()
   const showAction = Boolean(actionLabel && actionEventName)
+
+  const handleActionClick = React.useCallback(() => {
+    window.dispatchEvent(new Event(actionEventName))
+    if (actionEventName === "nook:create-room") {
+      router.push("/dashboard?createRoom=1")
+    }
+  }, [actionEventName, router])
+
+  React.useEffect(() => {
+    if (actionEventName !== "nook:create-room") return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
+      const key = event.key.toLowerCase()
+      if (key === "n" || ((event.metaKey || event.ctrlKey) && key === "k")) {
+        event.preventDefault()
+        handleActionClick()
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [actionEventName, handleActionClick])
 
   return (
     <header className="flex h-(--header-height) shrink-0 items-center border-b border-cyan-500/15 bg-background/70 backdrop-blur transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
@@ -42,9 +75,7 @@ export function SiteHeader({
             <Button
               size="sm"
               className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-              onClick={() => {
-                window.dispatchEvent(new Event(actionEventName))
-              }}
+              onClick={handleActionClick}
             >
               <Plus />
               {actionLabel}
