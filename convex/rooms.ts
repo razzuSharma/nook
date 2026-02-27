@@ -191,6 +191,14 @@ export const create = mutation({
     description: v.string(),
     mode: v.string(),
     access: v.union(v.literal("public"), v.literal("private"), v.literal("invite_only")),
+    icon: v.optional(
+      v.union(
+        v.literal("code"),
+        v.literal("rocket"),
+        v.literal("cpu"),
+        v.literal("sparkles")
+      )
+    ),
     membersMax: v.number(),
     userId: v.string(),
   },
@@ -206,7 +214,7 @@ export const create = mutation({
       membersCount: 1,
       membersMax: safeMax,
       joinCode: args.access === "public" ? generateJoinCode() : undefined,
-      icon: "sparkles",
+      icon: args.icon ?? "sparkles",
       createdAt: now,
     })
 

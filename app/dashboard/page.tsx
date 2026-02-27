@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import {
   ArrowRight,
@@ -110,6 +111,39 @@ type ViewerNotificationResult = {
   }>
 }
 
+type RoomAccess = "public" | "private" | "invite_only"
+type RoomIconKey = "code" | "rocket" | "cpu" | "sparkles"
+
+const ROOM_TEMPLATES = [
+  {
+    id: "build-sprint",
+    label: "Build Sprint",
+    mode: "Build Sprint",
+    description: "Execution room for shipping tasks this sprint.",
+  },
+  {
+    id: "design-review",
+    label: "Design Review",
+    mode: "Design Review",
+    description: "Review flows, UI details, and unblock design decisions.",
+  },
+  {
+    id: "bug-bash",
+    label: "Bug Bash",
+    mode: "Bug Bash",
+    description: "Triage, reproduce, and close quality issues quickly.",
+  },
+] as const
+
+const ROOM_EMOJIS = ["🔥", "🚀", "🛠️", "🎯", "🧠", "⚡"] as const
+
+const ROOM_ACCENTS: Array<{ label: string; value: RoomIconKey; className: string }> = [
+  { label: "Cyan", value: "sparkles", className: "bg-cyan-500" },
+  { label: "Emerald", value: "rocket", className: "bg-emerald-500" },
+  { label: "Amber", value: "cpu", className: "bg-amber-500" },
+  { label: "Rose", value: "code", className: "bg-rose-500" },
+]
+
 function formatPlanDue(dueAt?: number) {
   if (!dueAt) return "No deadline"
   const now = Date.now()
@@ -185,6 +219,16 @@ function initialsFromName(name: string) {
     .toUpperCase()
 }
 
+function slugifyRoomName(name: string) {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+  return slug || "new-room"
+}
+
 function RoomMetricsCollector({
   roomId,
   sessionToken,
@@ -214,6 +258,8 @@ function RoomMetricsCollector({
 }
 
 export default function Page() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, sessionToken } = useAuth()
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there"
   const userId = user?.id
@@ -227,6 +273,7 @@ export default function Page() {
     [joinedRoomIdsQuery]
   )
   const createQuickTask = useMutation(roomTasksApi.createQuickTask)
+  const createRoomInDb = useMutation(roomsApi.create)
   const assignedTasksQuery = useQuery(
     roomTasksApi.listAssignedByUser,
     userId ? { userId } : "skip"
@@ -258,6 +305,18 @@ export default function Page() {
   const [todayPlanEditMode, setTodayPlanEditMode] = React.useState(false)
   const [todayPlanOrderIds, setTodayPlanOrderIds] = React.useState<string[]>([])
   const [todayPlanPinnedIds, setTodayPlanPinnedIds] = React.useState<string[]>([])
+  const [createRoomOpen, setCreateRoomOpen] = React.useState(false)
+  const [roomName, setRoomName] = React.useState("")
+  const [roomDescription, setRoomDescription] = React.useState("")
+  const [roomMode, setRoomMode] = React.useState("")
+  const [roomMembersMax, setRoomMembersMax] = React.useState("8")
+  const [roomAccess, setRoomAccess] = React.useState<RoomAccess>("public")
+  const [roomEmoji, setRoomEmoji] = React.useState<string>("🔥")
+  const [roomIcon, setRoomIcon] = React.useState<RoomIconKey>("sparkles")
+  const [isCreatingRoom, setIsCreatingRoom] = React.useState(false)
+  const [statusEntries, setStatusEntries] = React.useState<
+    Array<{ id: string; text: string; createdAt: number }>
+  >([])
 
   const latestJoinedRoomId = React.useMemo(() => {
     const sortedByRecency = [...(roomDocs ?? [])].sort(
@@ -296,9 +355,80 @@ export default function Page() {
   }, [joinedRoomIds])
 
   React.useEffect(() => {
-    const timer = window.setInterval(() => setNowTimestamp(Date.now()), 60_000)
+    const timer = window.setInterval(() => setNowTimestamp(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [])
+
+  React.useEffect(() => {
+    const openCreateRoomDialog = () => setCreateRoomOpen(true)
+    window.addEventListener("nook:create-room", openCreateRoomDialog)
+    return () => window.removeEventListener("nook:create-room", openCreateRoomDialog)
+  }, [])
+
+  React.useEffect(() => {
+    if (searchParams.get("createRoom") !== "1") return
+    setCreateRoomOpen(true)
+    router.replace("/dashboard")
+  }, [router, searchParams])
+
+  function resetCreateRoomForm() {
+    setRoomName("")
+    setRoomDescription("")
+    setRoomMode("")
+    setRoomMembersMax("8")
+    setRoomAccess("public")
+    setRoomEmoji("🔥")
+    setRoomIcon("sparkles")
+  }
+
+  async function createRoom() {
+    if (!userId || isCreatingRoom) return
+    const name = roomName.trim()
+    const description = roomDescription.trim()
+    const mode = roomMode.trim()
+    const maxMembers = Number.parseInt(roomMembersMax, 10)
+    if (!name || !description || !mode || Number.isNaN(maxMembers)) {
+      toast.error("Complete all room fields before creating the room.")
+      return
+    }
+
+    try {
+      setIsCreatingRoom(true)
+      const displayName = `${roomEmoji} ${name}`.trim()
+      const result = (await createRoomInDb({
+        name: displayName,
+        description,
+        mode,
+        access: roomAccess,
+        icon: roomIcon,
+        membersMax: Math.max(2, maxMembers),
+        userId,
+      })) as Id<"rooms"> | { roomId?: Id<"rooms"> } | undefined
+
+      resetCreateRoomForm()
+      setCreateRoomOpen(false)
+      toast.success("Room created.")
+      const createdRoomId =
+        typeof result === "string" ? result : result?.roomId
+      if (createdRoomId) {
+        router.push(`/dashboard/rooms/${createdRoomId}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to create room."
+      toast.error(message)
+    } finally {
+      setIsCreatingRoom(false)
+    }
+  }
+
+  const canCreateRoom =
+    roomName.trim().length > 1 &&
+    roomDescription.trim().length > 5 &&
+    roomMode.trim().length > 2 &&
+    Number.parseInt(roomMembersMax, 10) >= 2 &&
+    !isCreatingRoom
+  const roomDescriptionCount = roomDescription.trim().length
+  const roomSlugPreview = slugifyRoomName(roomName)
 
   const analytics = React.useMemo(() => {
     const now = nowTimestamp
@@ -467,6 +597,7 @@ export default function Page() {
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        second: "2-digit",
       }),
     }
   }, [nowTimestamp])
@@ -667,6 +798,26 @@ export default function Page() {
     }
   }, [focusSessions, onboardingOpen, nowTimestamp, userId])
 
+  React.useEffect(() => {
+    const storageKey = `nook.dashboard.status-entries.v1:${userId ?? "guest"}`
+    try {
+      const raw = window.localStorage.getItem(storageKey)
+      if (!raw) {
+        setStatusEntries([])
+        return
+      }
+      const parsed = JSON.parse(raw) as Array<{ id: string; text: string; createdAt: number }>
+      setStatusEntries(Array.isArray(parsed) ? parsed : [])
+    } catch {
+      setStatusEntries([])
+    }
+  }, [userId])
+
+  React.useEffect(() => {
+    const storageKey = `nook.dashboard.status-entries.v1:${userId ?? "guest"}`
+    window.localStorage.setItem(storageKey, JSON.stringify(statusEntries.slice(0, 5)))
+  }, [statusEntries, userId])
+
   function completeOnboarding() {
     const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
     window.localStorage.setItem(userKey, "done")
@@ -711,6 +862,14 @@ export default function Page() {
         userId,
         title,
       })
+      setStatusEntries((prev) => [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          text: title,
+          createdAt: Date.now(),
+        },
+        ...prev,
+      ])
       setQuickTask("")
       toast("Task added", {
         description: "Added to your most recent active room.",
@@ -758,38 +917,52 @@ export default function Page() {
               </div>
               <div className="grid gap-3 lg:grid-cols-[1.15fr_1fr]">
                 <div className="grid gap-2 sm:grid-cols-3">
-                  {quickActions.map((action) => (
-                    <Link
-                      key={action.label}
-                      href={action.href}
-                      className="flex items-center justify-between rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm font-medium transition-colors hover:bg-cyan-500/10"
-                    >
-                      {action.label}
-                      <ArrowRight className="size-4 text-cyan-700 dark:text-cyan-300" />
-                    </Link>
-                  ))}
+                  {isDashboardLoading
+                    ? Array.from({ length: 3 }, (_, index) => (
+                        <div
+                          key={`action-skeleton-${index}`}
+                          className="h-14 animate-pulse rounded-xl border border-cyan-500/20 bg-cyan-500/10"
+                        />
+                      ))
+                    : quickActions.map((action) => (
+                        <Link
+                          key={action.label}
+                          href={action.href}
+                          className="flex items-center justify-between rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm font-medium transition-colors hover:bg-cyan-500/10"
+                        >
+                          {action.label}
+                          <ArrowRight className="size-4 text-cyan-700 dark:text-cyan-300" />
+                        </Link>
+                      ))}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
-                  {notificationItems.map((item) => (
-                    <Link
-                      key={item.label}
-                      href={item.href}
-                      aria-disabled={item.disabled}
-                      className={`rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 transition-colors ${
-                        item.disabled
-                          ? "pointer-events-none opacity-60"
-                          : "hover:bg-cyan-500/10"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          {item.label}
-                        </p>
-                        <Badge variant="secondary">{item.value}</Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{item.hint}</p>
-                    </Link>
-                  ))}
+                  {isDashboardLoading
+                    ? Array.from({ length: 4 }, (_, index) => (
+                        <div
+                          key={`metric-skeleton-${index}`}
+                          className="h-16 animate-pulse rounded-lg border border-cyan-500/20 bg-cyan-500/10"
+                        />
+                      ))
+                    : notificationItems.map((item) => (
+                        <Link
+                          key={item.label}
+                          href={item.href}
+                          aria-disabled={item.disabled}
+                          className={`rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 transition-colors ${
+                            item.disabled
+                              ? "pointer-events-none opacity-60"
+                              : "hover:bg-cyan-500/10"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              {item.label}
+                            </p>
+                            <Badge variant="secondary">{item.value}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.hint}</p>
+                        </Link>
+                      ))}
                 </div>
               </div>
               <div className="mt-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-2.5">
@@ -871,6 +1044,26 @@ export default function Page() {
                 Add Task
               </Button>
             </form>
+            {statusEntries.length > 0 ? (
+              <div className="mb-5 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Recent updates
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {statusEntries.slice(0, 3).map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/15 bg-background/60 px-2.5 py-1.5 text-xs"
+                    >
+                      <span className="truncate">{entry.text}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {formatRelativeTime(entry.createdAt, nowTimestamp)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {metrics.map((metric) => (
@@ -928,6 +1121,18 @@ export default function Page() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {focusPercent}% complete. Keep the streak alive.
               </p>
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    window.location.href = "/dashboard/focus"
+                  }}
+                  className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                >
+                  Start Focus Session
+                </Button>
+              </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -1136,6 +1341,169 @@ export default function Page() {
         </div>
       </SidebarInset>
       <RightSidebar />
+      <Dialog open={createRoomOpen} onOpenChange={setCreateRoomOpen}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Create Room</DialogTitle>
+            <DialogDescription>
+              Start a focused collaboration room for your team.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">Template</p>
+              <div className="flex flex-wrap gap-2">
+                {ROOM_TEMPLATES.map((template) => (
+                  <Button
+                    key={template.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setRoomMode(template.mode)
+                      setRoomDescription(template.description)
+                    }}
+                  >
+                    {template.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">Emoji</p>
+              <div className="flex flex-wrap gap-2">
+                {ROOM_EMOJIS.map((emoji) => (
+                  <Button
+                    key={emoji}
+                    type="button"
+                    size="icon"
+                    variant={roomEmoji === emoji ? "default" : "outline"}
+                    className={roomEmoji === emoji ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400" : ""}
+                    onClick={() => setRoomEmoji(emoji)}
+                    aria-label={`Use ${emoji} emoji`}
+                  >
+                    <span>{emoji}</span>
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="create-room-name" className="text-sm font-medium">
+                Room name
+              </label>
+              <Input
+                id="create-room-name"
+                value={roomName}
+                onChange={(event) => setRoomName(event.target.value)}
+                placeholder="Frontend Architecture Guild"
+                className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30"
+              />
+              <p className="text-xs text-muted-foreground">
+                URL preview: <span className="font-mono">/dashboard/rooms/{roomSlugPreview}</span>
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <label htmlFor="create-room-description" className="text-sm font-medium">
+                  Description
+                </label>
+                <span className="text-xs text-muted-foreground">{roomDescriptionCount}/180</span>
+              </div>
+              <textarea
+                id="create-room-description"
+                value={roomDescription}
+                onChange={(event) => setRoomDescription(event.target.value)}
+                placeholder="What will this room focus on?"
+                maxLength={180}
+                className="min-h-20 w-full rounded-md border border-cyan-500/25 bg-cyan-500/5 px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <label htmlFor="create-room-mode" className="text-sm font-medium">
+                  Mode label
+                </label>
+                <Input
+                  id="create-room-mode"
+                  value={roomMode}
+                  onChange={(event) => setRoomMode(event.target.value)}
+                  placeholder="Build Sprint"
+                  className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="create-room-members-max" className="text-sm font-medium">
+                  Max members
+                </label>
+                <Input
+                  id="create-room-members-max"
+                  type="number"
+                  min={2}
+                  max={30}
+                  value={roomMembersMax}
+                  onChange={(event) => setRoomMembersMax(event.target.value)}
+                  className="border-cyan-500/25 bg-cyan-500/5 focus-visible:ring-cyan-500/30"
+                />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <p className="text-sm font-medium">Room accent</p>
+              <div className="flex flex-wrap gap-2">
+                {ROOM_ACCENTS.map((accent) => (
+                  <Button
+                    key={accent.value}
+                    type="button"
+                    size="sm"
+                    variant={roomIcon === accent.value ? "default" : "outline"}
+                    className={roomIcon === accent.value ? "bg-cyan-500 text-slate-950 hover:bg-cyan-400" : ""}
+                    onClick={() => setRoomIcon(accent.value)}
+                  >
+                    <span className={`mr-2 inline-block size-2.5 rounded-full ${accent.className}`} />
+                    {accent.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="create-room-access" className="text-sm font-medium">
+                Access
+              </label>
+              <select
+                id="create-room-access"
+                value={roomAccess}
+                onChange={(event) => setRoomAccess(event.target.value as RoomAccess)}
+                className="h-10 rounded-md border border-cyan-500/25 bg-cyan-500/5 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
+              >
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+                <option value="invite_only">Invite only</option>
+              </select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                resetCreateRoomForm()
+                setCreateRoomOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+              onClick={() => {
+                void createRoom()
+              }}
+              disabled={!canCreateRoom}
+            >
+              {isCreatingRoom ? "Creating..." : "Create Room"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
         <DialogContent
           className="sm:max-w-[580px]"

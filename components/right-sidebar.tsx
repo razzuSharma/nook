@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useQuery } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
 import {
   Bell,
   Calendar,
@@ -19,6 +19,16 @@ import { tasksApi } from "@/lib/convex-tasks-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
 import { roomsApi } from "@/lib/convex-rooms-api"
+import { notificationsApi } from "@/lib/convex-notifications-api"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import {
   Tooltip,
   TooltipContent,
@@ -54,6 +64,19 @@ type RoomListItem = {
   membersCount: number
 }
 
+type ViewerNotificationResult = {
+  unreadCount: number
+  items: Array<{
+    id: string
+    title: string
+    message: string
+    roomId?: string
+    taskId?: string
+    readAt: number | null
+    createdAt: number
+  }>
+}
+
 const NOTES_STORAGE_KEY = "nook.right.sidebar.notes.v1"
 const COLLAPSED_STORAGE_KEY = "nook.right.sidebar.collapsed.v1"
 
@@ -81,6 +104,7 @@ export function RightSidebar() {
   const { user, sessionToken } = useAuth()
   const [collapsed, setCollapsed] = React.useState(false)
   const [hasLoadedCollapsedPref, setHasLoadedCollapsedPref] = React.useState(false)
+  const [notificationsOpen, setNotificationsOpen] = React.useState(false)
   const [notes, setNotes] = React.useState("")
   const collapsedStorageKey = React.useMemo(
     () => `${COLLAPSED_STORAGE_KEY}:${user?.id ?? "guest"}`,
@@ -100,6 +124,11 @@ export function RightSidebar() {
     user?.id ? { userId: user.id } : "skip"
   ) as AssignedRoomTask[] | undefined
   const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
+  const notifications = useQuery(
+    notificationsApi.listByViewer,
+    sessionToken ? { sessionToken, limit: 20 } : "skip"
+  ) as ViewerNotificationResult | undefined
+  const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
 
   React.useEffect(() => {
     const saved = window.localStorage.getItem(NOTES_STORAGE_KEY)
@@ -181,7 +210,7 @@ export function RightSidebar() {
   }, [roomDocs])
 
   const actions = [
-    { icon: Bell, label: "Notifications" },
+    { icon: Bell, label: "Notifications", onClick: () => setNotificationsOpen(true) },
     { icon: Calendar, label: "Calendar" },
   ]
 
@@ -306,9 +335,19 @@ export function RightSidebar() {
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="flex size-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400"
+                    className={`relative flex size-10 items-center justify-center rounded-xl transition-colors hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400 ${
+                      action.label === "Notifications" && notificationsOpen
+                        ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300"
+                        : "text-muted-foreground"
+                    }`}
+                    onClick={action.onClick}
                   >
                     <action.icon className="size-5" />
+                    {action.label === "Notifications" && (notifications?.unreadCount ?? 0) > 0 ? (
+                      <span className="absolute mt-[-16px] ml-[18px] inline-flex min-w-4 items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-semibold text-slate-950">
+                        {Math.min(9, notifications?.unreadCount ?? 0)}
+                      </span>
+                    ) : null}
                     <span className="sr-only">{action.label}</span>
                   </button>
                 </TooltipTrigger>
@@ -339,6 +378,55 @@ export function RightSidebar() {
           </TooltipProvider>
         </div>
       </div>
+      <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+        <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-md">
+          <SheetHeader className="border-b border-cyan-500/15 px-5 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <SheetTitle>Notifications</SheetTitle>
+                <SheetDescription>Assignment alerts and updates.</SheetDescription>
+              </div>
+              <Badge variant="secondary">{notifications?.unreadCount ?? 0} unread</Badge>
+            </div>
+          </SheetHeader>
+          <div className="flex h-full flex-col px-4 py-3">
+            <div className="mb-3 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!sessionToken || !notifications || notifications.unreadCount === 0}
+                onClick={() => {
+                  if (!sessionToken) return
+                  void markAllNotificationsRead({ sessionToken })
+                }}
+              >
+                Mark all read
+              </Button>
+            </div>
+            <div className="space-y-2 overflow-y-auto">
+              {!notifications ? (
+                <p className="text-sm text-muted-foreground">Loading notifications...</p>
+              ) : notifications.items.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No notifications yet.</p>
+              ) : (
+                notifications.items.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium">{item.title}</p>
+                      {!item.readAt ? <Badge variant="secondary">new</Badge> : null}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </aside>
   )
 }
