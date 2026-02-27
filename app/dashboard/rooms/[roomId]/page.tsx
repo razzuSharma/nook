@@ -36,6 +36,7 @@ import { roomTasksApi } from "@/lib/convex-room-tasks-api"
 import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
 import { useAuth } from "@/components/providers/auth-provider"
+import { toast } from "sonner"
 import {
   SidebarInset,
   SidebarProvider,
@@ -85,6 +86,7 @@ export default function RoomPage() {
     roomsApi.joinedRoomIdsByUser,
     user ? { userId: user.id } : "skip"
   ) ?? []) as Id<"rooms">[]
+  const joinRoomInDb = useMutation(roomsApi.joinByRoomId)
   const createInvite = useMutation(roomInvitesApi.create)
   const revokeInvite = useMutation(roomInvitesApi.revoke)
   const updateRoomSettings = useMutation(roomsApi.updateSettings)
@@ -103,6 +105,7 @@ export default function RoomPage() {
   const [settingsMembersMax, setSettingsMembersMax] = React.useState("8")
   const [settingsMessage, setSettingsMessage] = React.useState<string | null>(null)
   const [settingsError, setSettingsError] = React.useState<string | null>(null)
+  const [joiningRoom, setJoiningRoom] = React.useState(false)
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
@@ -296,6 +299,23 @@ export default function RoomPage() {
     updateRoomSettings,
   ])
 
+  const joinRoom = React.useCallback(async () => {
+    if (!room || !user || joiningRoom) return
+    try {
+      setJoiningRoom(true)
+      await joinRoomInDb({
+        roomId: room._id,
+        userId: user.id,
+      })
+      toast.success("Joined room successfully.")
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to join room.")
+    } finally {
+      setJoiningRoom(false)
+    }
+  }, [joiningRoom, joinRoomInDb, room, router, user])
+
   return (
     <SidebarProvider
       style={
@@ -432,13 +452,31 @@ export default function RoomPage() {
                     </CardHeader>
                     <CardContent className="space-y-2 text-sm text-muted-foreground">
                       <p>Join this room to see live focus presence and room tasks.</p>
-                      <Button
-                        type="button"
-                        onClick={() => router.push("/dashboard")}
-                        className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
-                      >
-                        Back to Rooms
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {(room.access ?? "public") === "public" ? (
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              void joinRoom()
+                            }}
+                            disabled={joiningRoom || !user}
+                            className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                          >
+                            {joiningRoom ? "Joining..." : "Join Room"}
+                          </Button>
+                        ) : (
+                          <p className="text-xs">
+                            This room is {(room.access ?? "public") === "invite_only" ? "invite-only" : "private"}. Ask an admin for an invite.
+                          </p>
+                        )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => router.push("/dashboard")}
+                        >
+                          Back to Rooms
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ) : null}
