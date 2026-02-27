@@ -207,6 +207,15 @@ export const complete = mutation({
     sessionToken: v.string(),
     roomId: v.id("rooms"),
     reflection: v.optional(v.string()),
+    outcome: v.optional(
+      v.union(
+        v.literal("done"),
+        v.literal("progress"),
+        v.literal("blocked")
+      )
+    ),
+    blockerNote: v.optional(v.string()),
+    followUpTaskId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx, args.sessionToken)
@@ -239,6 +248,9 @@ export const complete = mutation({
       userId,
       intention: existing.intention,
       taskId: existing.taskId,
+      outcome: args.outcome,
+      blockerNote: args.blockerNote?.trim(),
+      followUpTaskId: args.followUpTaskId,
       durationMinutes: elapsedMinutes,
       reflection,
       visibility: existing.visibility,

@@ -1,5 +1,6 @@
 import { api } from "@/convex/_generated/api"
 import type { FunctionReference } from "convex/server"
+import type { Id } from "@/convex/_generated/dataModel"
 
 type FocusSessionsApiShape = {
   list: FunctionReference<
@@ -22,6 +23,11 @@ type FocusSessionsApiShape = {
       sessionId: string
       intention: string
       reflection: string
+      roomId?: Id<"rooms">
+      taskId?: string
+      outcome?: "done" | "progress" | "blocked"
+      blockerNote?: string
+      followUpTaskId?: string
       durationMinutes: number
       completedAt: string
     },

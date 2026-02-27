@@ -198,6 +198,15 @@ export default defineSchema({
     userId: v.id("users"),
     intention: v.string(),
     taskId: v.optional(v.string()),
+    outcome: v.optional(
+      v.union(
+        v.literal("done"),
+        v.literal("progress"),
+        v.literal("blocked")
+      )
+    ),
+    blockerNote: v.optional(v.string()),
+    followUpTaskId: v.optional(v.string()),
     durationMinutes: v.number(),
     reflection: v.string(),
     visibility: v.union(
@@ -237,6 +246,17 @@ export default defineSchema({
     sessionId: v.string(),
     intention: v.string(),
     reflection: v.string(),
+    roomId: v.optional(v.id("rooms")),
+    taskId: v.optional(v.string()),
+    outcome: v.optional(
+      v.union(
+        v.literal("done"),
+        v.literal("progress"),
+        v.literal("blocked")
+      )
+    ),
+    blockerNote: v.optional(v.string()),
+    followUpTaskId: v.optional(v.string()),
     durationMinutes: v.number(),
     completedAt: v.string(),
     createdAt: v.number(),

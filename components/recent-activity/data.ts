@@ -1,4 +1,5 @@
 export type ActivityItem = {
+  id: string
   name: string
   initials: string
   task: string

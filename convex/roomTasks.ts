@@ -67,6 +67,76 @@ export const listAssignedByUser = query({
   },
 })
 
+export const listRecentActivityByUser = query({
+  args: {
+    userId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("roomMembers")
+      .withIndex("by_user", (query) => query.eq("userId", args.userId))
+      .collect()
+    const activeRoomIds = memberships
+      .filter((membership) => membership.status === "active")
+      .map((membership) => membership.roomId)
+    if (activeRoomIds.length === 0) return []
+
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), 50)
+    const eventDocs = await Promise.all(
+      activeRoomIds.map((roomId) =>
+        ctx.db
+          .query("roomTaskEvents")
+          .withIndex("by_room_task_createdAt", (query) =>
+            query.eq("roomId", roomId)
+          )
+          .order("desc")
+          .take(limit)
+      )
+    )
+    const merged = eventDocs
+      .flat()
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, limit)
+
+    const taskTitleByKey = new Map<string, string>()
+    const actorById = new Map<string, { name: string }>()
+    await Promise.all(
+      merged.map(async (event) => {
+        const taskKey = `${event.roomId}:${event.taskId}`
+        if (!taskTitleByKey.has(taskKey)) {
+          const taskDoc = await ctx.db
+            .query("roomTasks")
+            .withIndex("by_room_taskId", (query) =>
+              query.eq("roomId", event.roomId).eq("taskId", event.taskId)
+            )
+            .first()
+          taskTitleByKey.set(taskKey, taskDoc?.title ?? event.taskId)
+        }
+        if (!actorById.has(event.actorUserId)) {
+          const normalized = ctx.db.normalizeId("users", event.actorUserId)
+          const actor = normalized ? await ctx.db.get(normalized) : null
+          actorById.set(event.actorUserId, {
+            name: actor?.name ?? "Teammate",
+          })
+        }
+      })
+    )
+
+    return merged.map((event) => ({
+      id: event._id,
+      roomId: event.roomId,
+      taskId: event.taskId,
+      taskTitle: taskTitleByKey.get(`${event.roomId}:${event.taskId}`) ?? event.taskId,
+      type: event.type,
+      message: event.message,
+      createdAt: event.createdAt,
+      actorUserId: event.actorUserId,
+      actorName: actorById.get(event.actorUserId)?.name ?? "Teammate",
+    }))
+  },
+})
+
 export const syncByRoom = mutation({
   args: {
     roomId: v.id("rooms"),
@@ -271,5 +341,108 @@ export const createQuickTask = mutation({
     })
 
     return { taskId }
+  },
+})
+
+export const completeFromFocus = mutation({
+  args: {
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    actorUserId: v.string(),
+    outcome: v.union(
+      v.literal("done"),
+      v.literal("progress"),
+      v.literal("blocked")
+    ),
+    blockerNote: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireTaskEditorRole(ctx, args.roomId, args.actorUserId)
+
+    const existingTask = await ctx.db
+      .query("roomTasks")
+      .withIndex("by_room_taskId", (query) =>
+        query.eq("roomId", args.roomId).eq("taskId", args.taskId)
+      )
+      .first()
+
+    if (!existingTask) {
+      throw new Error("Task not found in this room.")
+    }
+
+    const now = Date.now()
+    let nextStatus = existingTask.status
+    if (args.outcome === "done") nextStatus = "completed"
+    if (args.outcome === "blocked") nextStatus = "blocked"
+    if (args.outcome === "progress" && existingTask.status === "todo") {
+      nextStatus = "working"
+    }
+
+    await ctx.db.patch(existingTask._id, {
+      status: nextStatus,
+      updatedAt: now,
+      completedAt: nextStatus === "completed" ? now : undefined,
+    })
+
+    const outcomeLabel =
+      args.outcome === "done"
+        ? "Done"
+        : args.outcome === "progress"
+          ? "Progress made"
+          : "Blocked"
+    await ctx.db.insert("roomTaskEvents", {
+      roomId: args.roomId,
+      taskId: existingTask.taskId,
+      actorUserId: args.actorUserId,
+      type: "focus_outcome",
+      message: `Focus outcome: ${outcomeLabel}.`,
+      createdAt: now,
+    })
+
+    let followUpTaskId: string | undefined = undefined
+    if (args.outcome === "blocked") {
+      const latestTask = await ctx.db
+        .query("roomTasks")
+        .withIndex("by_room_order", (query) => query.eq("roomId", args.roomId))
+        .order("desc")
+        .first()
+      const order = latestTask ? latestTask.order + 1 : 0
+      followUpTaskId = `followup-${now}-${Math.random().toString(36).slice(2, 8)}`
+      const blockerNote = (args.blockerNote ?? "").trim()
+      const followUpTitle = `Unblock: ${existingTask.title}`
+      const followUpNote = blockerNote
+        ? `Raised from focus session.\nBlocker: ${blockerNote}`
+        : "Raised from focus session."
+
+      await ctx.db.insert("roomTasks", {
+        roomId: args.roomId,
+        taskId: followUpTaskId,
+        title: followUpTitle,
+        note: followUpNote,
+        assignee: existingTask.assignee,
+        assigneeUserId: existingTask.assigneeUserId,
+        priority: "high",
+        effort: "quick",
+        status: "todo",
+        order,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      await ctx.db.insert("roomTaskEvents", {
+        roomId: args.roomId,
+        taskId: followUpTaskId,
+        actorUserId: args.actorUserId,
+        type: "created",
+        message: `Created follow-up task from blocker in "${existingTask.title}".`,
+        createdAt: now,
+      })
+    }
+
+    return {
+      updatedTaskId: existingTask.taskId,
+      status: nextStatus,
+      followUpTaskId,
+    }
   },
 })

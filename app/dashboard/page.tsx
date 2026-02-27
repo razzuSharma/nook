@@ -1,22 +1,23 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useMutation, useQuery } from "convex/react"
 import {
   ArrowRight,
   ArrowUpRight,
   ClipboardList,
+  ChevronDown,
+  ChevronUp,
   Flame,
-  Keyboard,
-  MessageSquare,
+  Pin,
   Target,
   Timer,
 } from "lucide-react"
 import { AppSidebar } from "@/components/app-sidebar"
 import { RightSidebar } from "@/components/right-sidebar"
 import { ActivityFeed } from "@/components/recent-activity/activity-feed"
-import { recentActivityItems } from "@/components/recent-activity/data"
-import { RoomsGrid } from "@/components/rooms/rooms-grid"
+import type { ActivityItem } from "@/components/recent-activity/data"
 import { SiteHeader } from "@/components/site-header"
 import { useAuth } from "@/components/providers/auth-provider"
 import { Input } from "@/components/ui/input"
@@ -42,6 +43,9 @@ import type { Id } from "@/convex/_generated/dataModel"
 import { toast } from "sonner"
 
 const DASHBOARD_ONBOARDING_KEY = "nook.dashboard.onboarding.v1"
+const DASHBOARD_PLAN_ORDER_KEY = "nook.dashboard.today-plan.order.v1"
+const DASHBOARD_PLAN_PINNED_KEY = "nook.dashboard.today-plan.pinned.v1"
+const DASHBOARD_REVIEW_KEY = "nook.dashboard.daily-review.v1"
 const APP_BOOT_TIME = Date.now()
 
 type RoomListItem = {
@@ -74,12 +78,21 @@ type FocusSessionDoc = {
   durationMinutes: number
   createdAt: number
   completedAt: string
+  outcome?: "done" | "progress" | "blocked"
 }
 
 type FocusPresenceDoc = {
   userId: string
   status: "idle" | "focusing" | "break" | "done"
   endsAt: number | null
+}
+
+type RoomActivityEventDoc = {
+  id: string
+  taskTitle: string
+  type: string
+  createdAt: number
+  actorName: string
 }
 
 function formatPlanDue(dueAt?: number) {
@@ -129,6 +142,26 @@ function startOfDay(timestamp: number) {
 
 function dayIndex(windowStart: number, timestamp: number) {
   return Math.floor((timestamp - windowStart) / (24 * 60 * 60 * 1000))
+}
+
+function formatRelativeTime(timestamp: number, now: number) {
+  const seconds = Math.max(1, Math.floor((now - timestamp) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  const mins = Math.floor(seconds / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+function initialsFromName(name: string) {
+  return name
+    .split(" ")
+    .map((part) => part[0] ?? "")
+    .join("")
+    .slice(0, 2)
+    .toUpperCase()
 }
 
 function RoomMetricsCollector({
@@ -181,6 +214,10 @@ export default function Page() {
     focusSessionsApi.list,
     sessionToken ? { sessionToken } : "skip"
   ) as FocusSessionDoc[] | undefined
+  const recentActivityQuery = useQuery(
+    roomTasksApi.listRecentActivityByUser,
+    userId ? { userId, limit: 12 } : "skip"
+  ) as RoomActivityEventDoc[] | undefined
   const [roomTasksByRoom, setRoomTasksByRoom] = React.useState<
     Record<string, RoomTaskMetricDoc[]>
   >({})
@@ -191,6 +228,10 @@ export default function Page() {
   const [nowTimestamp, setNowTimestamp] = React.useState(() => Date.now())
   const [focusGoalHours] = React.useState(6)
   const [onboardingOpen, setOnboardingOpen] = React.useState(false)
+  const [dailyReviewOpen, setDailyReviewOpen] = React.useState(false)
+  const [todayPlanEditMode, setTodayPlanEditMode] = React.useState(false)
+  const [todayPlanOrderIds, setTodayPlanOrderIds] = React.useState<string[]>([])
+  const [todayPlanPinnedIds, setTodayPlanPinnedIds] = React.useState<string[]>([])
 
   const latestJoinedRoomId = React.useMemo(() => {
     const sortedByRecency = [...(roomDocs ?? [])].sort(
@@ -198,6 +239,10 @@ export default function Page() {
     )
     return sortedByRecency.find((room) => joinedRoomIds.includes(room._id))?._id
   }, [roomDocs, joinedRoomIds])
+  const isDashboardLoading =
+    roomDocs === undefined ||
+    (Boolean(userId) && assignedTasksQuery === undefined) ||
+    (Boolean(sessionToken) && focusSessions === undefined)
 
   const handleRoomTasks = React.useCallback((roomId: string, tasks: RoomTaskMetricDoc[]) => {
     setRoomTasksByRoom((prev) => (prev[roomId] === tasks ? prev : { ...prev, [roomId]: tasks }))
@@ -239,12 +284,18 @@ export default function Page() {
     let focusMinutesToday = 0
     let focusMinutes7d = 0
     let focusMinutesPrev7d = 0
+    let focusOutcomesTodayDone = 0
+    let focusOutcomesTodayProgress = 0
+    let focusOutcomesTodayBlocked = 0
 
     for (const session of focusSessions ?? []) {
       const stamp = new Date(session.completedAt).getTime()
       const timestamp = Number.isNaN(stamp) ? session.createdAt : stamp
       if (timestamp >= todayStart && timestamp <= now) {
         focusMinutesToday += session.durationMinutes
+        if (session.outcome === "done") focusOutcomesTodayDone += 1
+        else if (session.outcome === "progress") focusOutcomesTodayProgress += 1
+        else if (session.outcome === "blocked") focusOutcomesTodayBlocked += 1
       }
       if (timestamp >= windowStart && timestamp <= now) {
         const index = dayIndex(windowStart, timestamp)
@@ -362,6 +413,9 @@ export default function Page() {
       focusMinutesToday,
       focusMinutes7d,
       focusMinutesPrev7d,
+      focusOutcomesTodayDone,
+      focusOutcomesTodayProgress,
+      focusOutcomesTodayBlocked,
       focusDailyMinutes,
       velocityPercent,
       velocityPrevPercent,
@@ -377,6 +431,23 @@ export default function Page() {
 
   const focusedHours = Number((analytics.focusMinutesToday / 60).toFixed(1))
   const focusPercent = Math.min(100, Math.round((focusedHours / focusGoalHours) * 100))
+  const quickActions = React.useMemo(
+    () => [
+      {
+        label: "Open focus mode",
+        href: latestJoinedRoomId ? `/dashboard/rooms/${latestJoinedRoomId}/tasks` : "/dashboard",
+      },
+      {
+        label: "Review timeline",
+        href: "/dashboard/recent-activity",
+      },
+      {
+        label: "Check saved tasks",
+        href: "/dashboard/saved-tasks",
+      },
+    ],
+    [latestJoinedRoomId]
+  )
   const metrics = React.useMemo(
     () => [
       {
@@ -409,20 +480,10 @@ export default function Page() {
         ),
         points: analytics.activeCollaboratorsDaily,
       },
-      {
-        label: "ROOM HEALTH",
-        value: `${analytics.roomHealthScore}%`,
-        trend: formatDelta(
-          analytics.roomHealthScore,
-          analytics.roomHealthPrevScore,
-          " score"
-        ),
-        points: analytics.roomHealthDaily,
-      },
     ],
     [analytics]
   )
-  const todayPlan = React.useMemo(() => {
+  const rankedAssignedTasks = React.useMemo(() => {
     const scoreTask = (task: AssignedRoomTask) => {
       let score = 0
       if (task.status === "working") score += 35
@@ -443,19 +504,149 @@ export default function Page() {
     return (assignedTasksQuery ?? [])
       .filter((task) => task.status !== "completed")
       .sort((left, right) => scoreTask(right) - scoreTask(left))
-      .slice(0, 3)
   }, [assignedTasksQuery])
+  const todayPlan = React.useMemo(() => {
+    const byId = new Map(rankedAssignedTasks.map((task) => [task.taskId, task]))
+    const rankedIds = rankedAssignedTasks.map((task) => task.taskId)
+    const orderedRanked = [
+      ...todayPlanOrderIds.filter((taskId) => rankedIds.includes(taskId)),
+      ...rankedIds.filter((taskId) => !todayPlanOrderIds.includes(taskId)),
+    ]
+    const pinned = [
+      ...todayPlanOrderIds.filter(
+        (taskId) => todayPlanPinnedIds.includes(taskId) && byId.has(taskId)
+      ),
+      ...rankedIds.filter(
+        (taskId) =>
+          todayPlanPinnedIds.includes(taskId) && !todayPlanOrderIds.includes(taskId)
+      ),
+    ]
+    const merged = [...pinned, ...orderedRanked.filter((taskId) => !pinned.includes(taskId))]
+    return merged
+      .slice(0, 3)
+      .map((taskId) => byId.get(taskId))
+      .filter((task): task is AssignedRoomTask => Boolean(task))
+  }, [rankedAssignedTasks, todayPlanOrderIds, todayPlanPinnedIds])
+  const notificationItems = React.useMemo(() => {
+    const blockedCount = (assignedTasksQuery ?? []).filter(
+      (task) => task.status === "blocked"
+    ).length
+    const overdueCount = (assignedTasksQuery ?? []).filter(
+      (task) => task.status !== "completed" && Boolean(task.dueAt && task.dueAt < nowTimestamp)
+    ).length
+    const roomTasksHref = latestJoinedRoomId
+      ? `/dashboard/rooms/${latestJoinedRoomId}/tasks`
+      : "/dashboard"
+    return [
+      {
+        label: "Blocked tasks",
+        value: blockedCount,
+        hint: blockedCount > 0 ? "Review blockers and assign an unblock owner." : "All clear.",
+        href: `${roomTasksHref}?status=blocked`,
+        disabled: !latestJoinedRoomId,
+      },
+      {
+        label: "Overdue tasks",
+        value: overdueCount,
+        hint: overdueCount > 0 ? "Rescope deadlines in room tasks." : "Deadlines on track.",
+        href: `${roomTasksHref}?due=overdue&status=open`,
+        disabled: !latestJoinedRoomId,
+      },
+      {
+        label: "Mentions",
+        value: 0,
+        hint: "Coming soon",
+        href: "/dashboard/recent-activity",
+        disabled: false,
+      },
+    ]
+  }, [assignedTasksQuery, latestJoinedRoomId, nowTimestamp])
+  const recentActivityItems = React.useMemo((): ActivityItem[] => {
+    if (!recentActivityQuery) return []
+    return recentActivityQuery.slice(0, 8).map((event) => ({
+      id: String(event.id),
+      name: event.actorName,
+      initials: initialsFromName(event.actorName),
+      task: event.taskTitle,
+      activity:
+        event.type === "focus_outcome"
+          ? "updated from focus:"
+          : event.type.replaceAll("_", " "),
+      time: formatRelativeTime(event.createdAt, nowTimestamp),
+    }))
+  }, [recentActivityQuery, nowTimestamp])
 
   React.useEffect(() => {
     const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
     const seen = window.localStorage.getItem(userKey)
     if (!seen) setOnboardingOpen(true)
   }, [userId])
+  React.useEffect(() => {
+    const userKey = `${DASHBOARD_PLAN_ORDER_KEY}:${userId ?? "guest"}`
+    const pinnedKey = `${DASHBOARD_PLAN_PINNED_KEY}:${userId ?? "guest"}`
+    try {
+      const order = window.localStorage.getItem(userKey)
+      const pinned = window.localStorage.getItem(pinnedKey)
+      if (order) setTodayPlanOrderIds(JSON.parse(order) as string[])
+      if (pinned) setTodayPlanPinnedIds(JSON.parse(pinned) as string[])
+    } catch {
+      setTodayPlanOrderIds([])
+      setTodayPlanPinnedIds([])
+    }
+  }, [userId])
+  React.useEffect(() => {
+    const userKey = `${DASHBOARD_PLAN_ORDER_KEY}:${userId ?? "guest"}`
+    const pinnedKey = `${DASHBOARD_PLAN_PINNED_KEY}:${userId ?? "guest"}`
+    window.localStorage.setItem(userKey, JSON.stringify(todayPlanOrderIds))
+    window.localStorage.setItem(pinnedKey, JSON.stringify(todayPlanPinnedIds))
+  }, [todayPlanOrderIds, todayPlanPinnedIds, userId])
+  React.useEffect(() => {
+    if (onboardingOpen || !focusSessions) return
+    const todayKey = new Date(startOfDay(nowTimestamp)).toISOString().slice(0, 10)
+    const reviewStorageKey = `${DASHBOARD_REVIEW_KEY}:${userId ?? "guest"}:${todayKey}`
+    const seen = window.localStorage.getItem(reviewStorageKey)
+    const todaySessionCount = focusSessions.filter((session) => {
+      const stamp = new Date(session.completedAt).getTime()
+      const ts = Number.isNaN(stamp) ? session.createdAt : stamp
+      return ts >= startOfDay(nowTimestamp)
+    }).length
+    if (!seen && todaySessionCount >= 2) {
+      setDailyReviewOpen(true)
+    }
+  }, [focusSessions, onboardingOpen, nowTimestamp, userId])
 
   function completeOnboarding() {
     const userKey = `${DASHBOARD_ONBOARDING_KEY}:${userId ?? "guest"}`
     window.localStorage.setItem(userKey, "done")
     setOnboardingOpen(false)
+  }
+  function completeDailyReview() {
+    const todayKey = new Date(startOfDay(nowTimestamp)).toISOString().slice(0, 10)
+    const reviewStorageKey = `${DASHBOARD_REVIEW_KEY}:${userId ?? "guest"}:${todayKey}`
+    window.localStorage.setItem(reviewStorageKey, "done")
+    setDailyReviewOpen(false)
+  }
+  function moveTodayPlan(taskId: string, direction: "up" | "down") {
+    const current = todayPlan.map((task) => task.taskId)
+    const index = current.indexOf(taskId)
+    if (index < 0) return
+    const target = direction === "up" ? index - 1 : index + 1
+    if (target < 0 || target >= current.length) return
+    const swapped = [...current]
+    const [item] = swapped.splice(index, 1)
+    swapped.splice(target, 0, item)
+    setTodayPlanOrderIds((prev) => {
+      const rest = prev.filter((id) => !swapped.includes(id))
+      return [...swapped, ...rest]
+    })
+  }
+  function togglePinTodayTask(taskId: string) {
+    setTodayPlanPinnedIds((prev) =>
+      prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]
+    )
+    if (!todayPlanOrderIds.includes(taskId)) {
+      setTodayPlanOrderIds((prev) => [taskId, ...prev])
+    }
   }
 
   async function submitQuickTask(event: React.FormEvent<HTMLFormElement>) {
@@ -494,7 +685,7 @@ export default function Page() {
         <div className="flex flex-1 flex-col px-4 py-5 md:px-6 md:py-6 lg:pr-20">
           <div className="mx-auto w-full max-w-6xl">
             <div className="mb-6">
-              <h1 className="bg-gradient-to-r from-teal-700 via-cyan-700 to-teal-500 bg-clip-text text-4xl font-semibold tracking-tight text-transparent dark:from-cyan-200 dark:via-teal-200 dark:to-cyan-400 md:text-5xl">
+              <h1 className="bg-linear-to-r from-teal-700 via-cyan-700 to-teal-500 bg-clip-text text-4xl font-semibold tracking-tight text-transparent dark:from-cyan-200 dark:via-teal-200 dark:to-cyan-400 md:text-5xl">
                 Good afternoon, {firstName}.
               </h1>
               <p className="mt-2 text-muted-foreground">
@@ -502,7 +693,53 @@ export default function Page() {
               </p>
             </div>
 
+            <section className="mb-5 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold">Today Command Center</h2>
+                <Badge variant="outline" className="text-xs">
+                  {isDashboardLoading ? "Syncing data" : "Live"}
+                </Badge>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-[1.15fr_1fr]">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {quickActions.map((action) => (
+                    <Link
+                      key={action.label}
+                      href={action.href}
+                      className="flex items-center justify-between rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm font-medium transition-colors hover:bg-cyan-500/10"
+                    >
+                      {action.label}
+                      <ArrowRight className="size-4 text-cyan-700 dark:text-cyan-300" />
+                    </Link>
+                  ))}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
+                  {notificationItems.map((item) => (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      aria-disabled={item.disabled}
+                      className={`rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 transition-colors ${
+                        item.disabled
+                          ? "pointer-events-none opacity-60"
+                          : "hover:bg-cyan-500/10"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {item.label}
+                        </p>
+                        <Badge variant="secondary">{item.value}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{item.hint}</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </section>
+
             <form
+              id="quick-task"
               onSubmit={(event) => {
                 void submitQuickTask(event)
               }}
@@ -535,7 +772,7 @@ export default function Page() {
               </Button>
             </form>
 
-            <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {metrics.map((metric) => (
                 <div
                   key={metric.label}
@@ -580,7 +817,7 @@ export default function Page() {
               </div>
               <div className="relative h-1.5 rounded-full bg-cyan-500/10">
                 <div
-                  className="relative h-full rounded-full bg-gradient-to-r from-cyan-500 to-teal-400 transition-all"
+                  className="relative h-full rounded-full bg-linear-to-r from-cyan-500 to-teal-400 transition-all"
                   style={{ width: `${focusPercent}%` }}
                 >
                   <span className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rounded-full border border-cyan-500/30 bg-background px-1.5 py-0 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">
@@ -591,6 +828,26 @@ export default function Page() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {focusPercent}% complete. Keep the streak alive.
               </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Tasks Done
+                  </p>
+                  <p className="text-sm font-semibold">{analytics.focusOutcomesTodayDone}</p>
+                </div>
+                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Progress
+                  </p>
+                  <p className="text-sm font-semibold">{analytics.focusOutcomesTodayProgress}</p>
+                </div>
+                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Blockers
+                  </p>
+                  <p className="text-sm font-semibold">{analytics.focusOutcomesTodayBlocked}</p>
+                </div>
+              </div>
             </div>
 
             <section className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
@@ -601,6 +858,14 @@ export default function Page() {
                     Top work to finish today from your assigned room tasks.
                   </p>
                 </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setTodayPlanEditMode((prev) => !prev)}
+                >
+                  {todayPlanEditMode ? "Done Editing" : "Edit Plan"}
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -630,6 +895,46 @@ export default function Page() {
                           {index + 1}. {task.title}
                         </p>
                         <div className="flex items-center gap-1">
+                          {todayPlanEditMode ? (
+                            <>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7"
+                                onClick={() => moveTodayPlan(task.taskId, "up")}
+                                aria-label="Move up"
+                              >
+                                <ChevronUp className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7"
+                                onClick={() => moveTodayPlan(task.taskId, "down")}
+                                aria-label="Move down"
+                              >
+                                <ChevronDown className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7"
+                                onClick={() => togglePinTodayTask(task.taskId)}
+                                aria-label="Pin task"
+                              >
+                                <Pin
+                                  className={`size-3.5 ${
+                                    todayPlanPinnedIds.includes(task.taskId)
+                                      ? "text-cyan-700 dark:text-cyan-300"
+                                      : "text-muted-foreground"
+                                  }`}
+                                />
+                              </Button>
+                            </>
+                          ) : null}
                           <Badge variant="secondary" className="capitalize">
                             {task.status === "working" ? "In Progress" : task.status}
                           </Badge>
@@ -647,8 +952,6 @@ export default function Page() {
               )}
             </section>
 
-            <RoomsGrid />
-
             <div className="mt-10">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-2xl font-semibold">Recent Activity</h2>
@@ -661,6 +964,7 @@ export default function Page() {
               </div>
               <ActivityFeed
                 items={recentActivityItems}
+                isLoading={recentActivityQuery === undefined}
                 suggestions={[
                   "Enter your first room ->",
                   "Invite a teammate ->",
@@ -669,14 +973,6 @@ export default function Page() {
               />
             </div>
 
-            <div className="fixed right-20 bottom-5 z-30 hidden rounded-full border border-cyan-500/35 bg-background/90 p-2 shadow-sm backdrop-blur md:flex">
-              <div className="flex items-center gap-2 px-2 text-xs text-muted-foreground">
-                <span className="inline-flex size-5 items-center justify-center rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
-                  <Keyboard className="size-3.5" />
-                </span>
-                <span>Shortcuts: N new room, F focus mode</span>
-              </div>
-            </div>
           </div>
         </div>
       </SidebarInset>
@@ -687,17 +983,16 @@ export default function Page() {
           overlayClassName="bg-black/65 backdrop-blur-[3px]"
         >
           <DialogHeader>
-            <DialogTitle>Your daily flow in 3 steps</DialogTitle>
+            <DialogTitle>Your daily flow in 2 steps</DialogTitle>
             <DialogDescription>
               Plan, focus, and unblock without switching apps.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 px-1 text-sm">
             <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Step 1 of 3</span>
+              <span>Step 1 of 2</span>
               <div className="flex items-center gap-1.5" aria-hidden>
                 <span className="h-1.5 w-5 rounded-full bg-cyan-500" />
-                <span className="h-1.5 w-5 rounded-full bg-cyan-500/25" />
                 <span className="h-1.5 w-5 rounded-full bg-cyan-500/25" />
               </div>
             </div>
@@ -723,18 +1018,6 @@ export default function Page() {
               </p>
               <p className="mt-2 text-muted-foreground">
                 Open a room task and start focus directly from that card.
-              </p>
-            </div>
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
-              <p className="flex items-center gap-2 font-medium">
-                <span className="inline-flex size-7 items-center justify-center rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
-                  3
-                </span>
-                <MessageSquare className="size-4 text-cyan-700 dark:text-cyan-300" />
-                Resolve blockers in task discussion
-              </p>
-              <p className="mt-2 text-muted-foreground">
-                Keep chat, files, and history attached to the task to reduce context switching.
               </p>
             </div>
           </div>
@@ -765,6 +1048,55 @@ export default function Page() {
           >
             Don&apos;t show again
           </button>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={dailyReviewOpen} onOpenChange={setDailyReviewOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Daily Review</DialogTitle>
+            <DialogDescription>
+              Quick summary before you close the day.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+              <p className="text-xs text-muted-foreground">Focused time</p>
+              <p className="text-lg font-semibold">{focusedHours.toFixed(1)}h</p>
+            </div>
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+              <p className="text-xs text-muted-foreground">Tasks moved</p>
+              <p className="text-lg font-semibold">
+                {analytics.focusOutcomesTodayDone + analytics.focusOutcomesTodayProgress}
+              </p>
+            </div>
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+              <p className="text-xs text-muted-foreground">Blockers</p>
+              <p className="text-lg font-semibold">{analytics.focusOutcomesTodayBlocked}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                completeDailyReview()
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                completeDailyReview()
+                toast("Plan tomorrow", {
+                  description: "Pin your top 3 tasks in Today Plan before you sign off.",
+                })
+              }}
+              className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+            >
+              Plan Tomorrow
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </SidebarProvider>

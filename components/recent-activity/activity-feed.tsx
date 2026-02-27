@@ -1,8 +1,11 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import type { ActivityItem } from "@/components/recent-activity/data"
+import { getActivityFeedState } from "@/lib/activity-feed-state.mjs"
 
 export function ActivityFeed({
   items,
+  isLoading = false,
+  errorMessage = null,
   suggestions = [
     "Enter your first room ->",
     "Invite a teammate ->",
@@ -10,9 +13,38 @@ export function ActivityFeed({
   ],
 }: {
   items: ActivityItem[]
+  isLoading?: boolean
+  errorMessage?: string | null
   suggestions?: string[]
 }) {
-  if (items.length === 0) {
+  const state = getActivityFeedState({ items, isLoading, errorMessage })
+
+  if (state === "loading") {
+    return (
+      <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 text-sm text-muted-foreground backdrop-blur">
+        <p className="font-medium text-foreground">Loading recent activity...</p>
+        <div className="mt-3 space-y-2">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-10 animate-pulse rounded-md bg-cyan-500/10"
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (state === "error") {
+    return (
+      <div className="rounded-2xl border border-rose-500/25 bg-rose-500/5 p-6 text-sm text-muted-foreground backdrop-blur">
+        <p className="font-medium text-foreground">Could not load recent activity.</p>
+        <p className="mt-2">{errorMessage}</p>
+      </div>
+    )
+  }
+
+  if (state === "empty") {
     return (
       <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 text-sm text-muted-foreground backdrop-blur">
         <p className="font-medium text-foreground">No recent activity yet.</p>
@@ -34,7 +66,7 @@ export function ActivityFeed({
       <ul className="divide-y divide-cyan-500/15">
         {items.map((item) => (
           <li
-            key={`${item.name}-${item.task}-${item.time}`}
+            key={item.id}
             className="flex items-start gap-3 px-3 py-4"
           >
             <Avatar className="size-9 border border-cyan-500/25 bg-cyan-500/15">

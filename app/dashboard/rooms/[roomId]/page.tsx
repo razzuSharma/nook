@@ -32,6 +32,8 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomInvitesApi } from "@/lib/convex-room-invites-api"
+import { roomTasksApi } from "@/lib/convex-room-tasks-api"
+import { roomFocusApi } from "@/lib/convex-room-focus-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
 import { useAuth } from "@/components/providers/auth-provider"
 import {
@@ -56,6 +58,20 @@ type RoomInvite = {
   role: "viewer" | "member" | "admin"
   status: "pending" | "accepted" | "revoked" | "expired"
   expiresAt: number
+}
+
+type RoomTaskDoc = {
+  taskId: string
+  title: string
+  status: "todo" | "working" | "blocked" | "completed"
+  assigneeUserId?: string
+}
+
+type FocusPresenceDoc = {
+  userId: string
+  status: "idle" | "focusing" | "break" | "done"
+  intention: string
+  taskId?: string
 }
 
 export default function RoomPage() {
@@ -109,6 +125,21 @@ export default function RoomPage() {
       }>
     | undefined
   const roomMembers = React.useMemo(() => roomMembersQuery ?? [], [roomMembersQuery])
+  const roomTasksQuery = useQuery(
+    roomTasksApi.listByRoom,
+    room && isJoined ? { roomId: room._id } : "skip"
+  ) as RoomTaskDoc[] | undefined
+  const roomTasks = React.useMemo(() => roomTasksQuery ?? [], [roomTasksQuery])
+  const roomFocusPresenceQuery = useQuery(
+    roomFocusApi.listPresence,
+    sessionToken && room && isJoined
+      ? { sessionToken, roomId: room._id }
+      : "skip"
+  ) as FocusPresenceDoc[] | undefined
+  const roomFocusPresence = React.useMemo(
+    () => roomFocusPresenceQuery ?? [],
+    [roomFocusPresenceQuery]
+  )
   const currentMembership = React.useMemo(
     () => roomMembers.find((member) => member.userId === user?.id) ?? null,
     [roomMembers, user?.id]
@@ -122,6 +153,76 @@ export default function RoomPage() {
       ? { sessionToken, roomId: room._id }
       : "skip"
   ) ?? []) as RoomInvite[]
+  const memberExecution = React.useMemo(() => {
+    const taskById = new Map(roomTasks.map((task) => [task.taskId, task]))
+    const focusByUser = new Map(
+      roomFocusPresence
+        .filter((item) => item.status === "focusing")
+        .map((item) => [item.userId, item])
+    )
+
+    return roomMembers
+      .map((member) => {
+        const assigned = roomTasks.filter((task) => task.assigneeUserId === member.userId)
+        const totalAssigned = assigned.length
+        const completed = assigned.filter((task) => task.status === "completed").length
+        const working = assigned.filter((task) => task.status === "working").length
+        const blocked = assigned.filter((task) => task.status === "blocked").length
+        const todo = assigned.filter((task) => task.status === "todo").length
+        const progress = totalAssigned > 0 ? Math.round((completed / totalAssigned) * 100) : 0
+        const focus = focusByUser.get(member.userId)
+        const activeTask =
+          focus?.taskId ? taskById.get(focus.taskId)?.title : working > 0 ? "In progress tasks" : null
+        return {
+          member,
+          totalAssigned,
+          completed,
+          working,
+          blocked,
+          todo,
+          progress,
+          engagement: focus ? `Focusing: ${focus.intention || activeTask || "Deep work"}` : activeTask,
+        }
+      })
+      .sort((left, right) => {
+        if (right.totalAssigned !== left.totalAssigned) return right.totalAssigned - left.totalAssigned
+        if (right.working !== left.working) return right.working - left.working
+        return left.member.name.localeCompare(right.member.name)
+      })
+  }, [roomFocusPresence, roomMembers, roomTasks])
+
+  const memberSuggestions = React.useMemo(() => {
+    const suggestions: string[] = []
+    const openUnassigned = roomTasks.filter(
+      (task) => !task.assigneeUserId && task.status !== "completed"
+    ).length
+    const blocked = roomTasks.filter((task) => task.status === "blocked").length
+    const assignedCounts = memberExecution.map((item) => item.totalAssigned)
+    const busiest = assignedCounts.length > 0 ? Math.max(...assignedCounts) : 0
+    const lightest = assignedCounts.length > 0 ? Math.min(...assignedCounts) : 0
+    const topCompleter = memberExecution
+      .filter((item) => item.totalAssigned >= 3)
+      .sort((left, right) => right.progress - left.progress)[0]
+
+    if (openUnassigned > 0) {
+      suggestions.push(`${openUnassigned} open task(s) are unassigned. Assign owners to improve flow.`)
+    }
+    if (blocked > 0) {
+      suggestions.push(`${blocked} blocked task(s) need unblock support in the next standup.`)
+    }
+    if (busiest - lightest >= 3) {
+      suggestions.push("Workload is uneven across members. Rebalance assignments this week.")
+    }
+    if (topCompleter) {
+      suggestions.push(
+        `${topCompleter.member.name} has ${topCompleter.progress}% completion. Pair them on high-priority work.`
+      )
+    }
+    if (suggestions.length === 0) {
+      suggestions.push("Execution is balanced. Keep reviewing blockers and ownership daily.")
+    }
+    return suggestions
+  }, [memberExecution, roomTasks])
 
   React.useEffect(() => {
     if (!room) return
@@ -379,6 +480,74 @@ export default function RoomPage() {
                         </ul>
                       </CardContent>
                     </Card>
+                    <Card className="border-cyan-500/20 bg-background/70">
+                      <CardHeader>
+                        <CardTitle>Team Execution</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {memberExecution.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No member data available yet.</p>
+                        ) : (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {memberExecution.map((item) => (
+                              <article
+                                key={item.member.userId}
+                                className="rounded-lg border border-cyan-500/15 bg-cyan-500/5 p-3"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <Avatar className="size-9 border border-cyan-500/30">
+                                      <AvatarImage
+                                        src={avatarSrcForKey(item.member.avatarKey)}
+                                        alt={item.member.name}
+                                      />
+                                      <AvatarFallback>
+                                        {item.member.name
+                                          .split(" ")
+                                          .map((part) => part[0] ?? "")
+                                          .join("")
+                                          .slice(0, 2)
+                                          .toUpperCase()}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <div>
+                                      <p className="text-sm font-medium">{item.member.name}</p>
+                                      <p className="text-xs text-muted-foreground capitalize">
+                                        {item.member.role}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <Badge variant="secondary">{item.totalAssigned} assigned</Badge>
+                                </div>
+                                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-300/40 dark:bg-slate-700/60">
+                                  <div
+                                    className="h-full rounded-full bg-cyan-500 transition-all"
+                                    style={{ width: `${item.progress}%` }}
+                                  />
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                                  <span>Done: {item.completed}</span>
+                                  <span>In Progress: {item.working}</span>
+                                  <span>Blocked: {item.blocked}</span>
+                                  <span>Todo: {item.todo}</span>
+                                </div>
+                                <p className="mt-2 text-xs text-cyan-800 dark:text-cyan-200">
+                                  {item.engagement ?? "Not currently focusing on a room task."}
+                                </p>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                        <div className="rounded-lg border border-cyan-500/15 bg-cyan-500/5 p-3">
+                          <p className="text-sm font-medium">Suggestions</p>
+                          <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+                            {memberSuggestions.map((tip) => (
+                              <li key={tip}>• {tip}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </CardContent>
+                    </Card>
                     <RoomFocusPanel roomId={room._id} />
                     <Card className="border-cyan-500/20 bg-background/70">
                       <CardHeader>
@@ -386,7 +555,7 @@ export default function RoomPage() {
                       </CardHeader>
                       <CardContent className="flex items-center justify-between gap-3">
                         <p className="text-sm text-muted-foreground">
-                          Open Task Board for task creation, kanban workflow, and member progress.
+                          Open Task Board for task creation and kanban workflow.
                         </p>
                         <Button asChild className="bg-cyan-500 text-slate-950 hover:bg-cyan-400">
                           <Link href={`/dashboard/rooms/${room._id}/tasks`}>

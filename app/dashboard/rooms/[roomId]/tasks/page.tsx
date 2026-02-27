@@ -3,7 +3,7 @@
 import * as React from "react"
 import { useQuery } from "convex/react"
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import type { Id } from "@/convex/_generated/dataModel"
 
 import { AppSidebar } from "@/components/app-sidebar"
@@ -25,6 +25,7 @@ type RoomDoc = {
 
 export default function RoomTasksPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user } = useAuth()
   const params = useParams<{ roomId: string }>()
   const roomId = params.roomId
@@ -40,6 +41,26 @@ export default function RoomTasksPage() {
     [roomId, rooms]
   )
   const isJoined = room ? joinedRoomIds.includes(room._id) : false
+  const initialDueFilter = React.useMemo(() => {
+    const due = searchParams.get("due")
+    if (due === "overdue" || due === "today" || due === "week" || due === "none") {
+      return due
+    }
+    return "all"
+  }, [searchParams])
+  const initialStatusFilter = React.useMemo(() => {
+    const status = searchParams.get("status")
+    if (
+      status === "open" ||
+      status === "todo" ||
+      status === "working" ||
+      status === "blocked" ||
+      status === "completed"
+    ) {
+      return status
+    }
+    return "all"
+  }, [searchParams])
 
   const startFocusFromTask = React.useCallback(
     (task: RoomTaskFocusTarget) => {
@@ -133,6 +154,8 @@ export default function RoomTasksPage() {
                   <RoomTaskBoard
                     roomId={room._id}
                     onStartFocusTask={startFocusFromTask}
+                    initialDueFilter={initialDueFilter}
+                    initialStatusFilter={initialStatusFilter}
                   />
                 )}
               </>
