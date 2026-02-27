@@ -7,6 +7,7 @@ import { useAuth } from "@/components/providers/auth-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toAuthErrorMessage } from "@/lib/auth-error-message"
 
 export default function ResetPasswordPage() {
   return (
@@ -64,11 +65,7 @@ function ResetPasswordContent() {
         router.replace("/sign-in")
       }, 1000)
     } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Unable to reset password."
-      )
+      setError(toAuthErrorMessage(submitError, "Unable to reset password."))
     } finally {
       setIsSubmitting(false)
     }

@@ -7,6 +7,7 @@ import { useAuth } from "@/components/providers/auth-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { toAuthErrorMessage } from "@/lib/auth-error-message"
 
 export default function SignInPage() {
   const router = useRouter()
@@ -36,7 +37,7 @@ export default function SignInPage() {
       await signIn({ email, password })
       router.replace("/dashboard")
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Unable to sign in.")
+      setError(toAuthErrorMessage(submitError, "Unable to sign in."))
     } finally {
       setIsSubmitting(false)
     }
@@ -53,9 +54,7 @@ export default function SignInPage() {
       setNotice("If this email can receive verification, we sent a verification link.")
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Unable to resend verification email."
+        toAuthErrorMessage(submitError, "Unable to resend verification email.")
       )
     } finally {
       setIsResending(false)
