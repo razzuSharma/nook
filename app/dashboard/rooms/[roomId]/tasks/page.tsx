@@ -61,6 +61,14 @@ export default function RoomTasksPage() {
     }
     return "all"
   }, [searchParams])
+  const initialThreadTaskId = React.useMemo(() => searchParams.get("taskId"), [searchParams])
+  const initialThreadTab = React.useMemo(() => {
+    const tab = searchParams.get("thread")
+    if (tab === "chat" || tab === "files" || tab === "history") {
+      return tab
+    }
+    return "chat"
+  }, [searchParams])
 
   const startFocusFromTask = React.useCallback(
     (task: RoomTaskFocusTarget) => {
@@ -156,6 +164,8 @@ export default function RoomTasksPage() {
                     onStartFocusTask={startFocusFromTask}
                     initialDueFilter={initialDueFilter}
                     initialStatusFilter={initialStatusFilter}
+                    initialThreadTaskId={initialThreadTaskId}
+                    initialThreadTab={initialThreadTab}
                   />
                 )}
               </>

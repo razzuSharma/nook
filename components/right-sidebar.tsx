@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
+import { useRouter } from "next/navigation"
 import {
   Bell,
   CalendarClock,
@@ -97,6 +98,7 @@ function formatDue(timestamp?: number) {
 }
 
 export function RightSidebar() {
+  const router = useRouter()
   const { user, sessionToken } = useAuth()
   const [collapsed, setCollapsed] = React.useState(false)
   const [hasLoadedCollapsedPref, setHasLoadedCollapsedPref] = React.useState(false)
@@ -123,6 +125,7 @@ export function RightSidebar() {
     notificationsApi.listByViewer,
     sessionToken ? { sessionToken, limit: 20 } : "skip"
   ) as ViewerNotificationResult | undefined
+  const markNotificationRead = useMutation(notificationsApi.markRead)
   const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
 
   React.useEffect(() => {
@@ -198,6 +201,25 @@ export function RightSidebar() {
   const actions = [
     { icon: Bell, label: "Notifications", onClick: () => setNotificationsOpen(true) },
   ]
+
+  async function openNotification(item: ViewerNotificationResult["items"][number]) {
+    if (sessionToken && !item.readAt) {
+      await markNotificationRead({
+        sessionToken,
+        notificationId: item.id,
+      })
+    }
+    setNotificationsOpen(false)
+    if (item.roomId && item.taskId) {
+      router.push(`/dashboard/rooms/${item.roomId}/tasks?taskId=${encodeURIComponent(item.taskId)}&thread=chat`)
+      return
+    }
+    if (item.roomId) {
+      router.push(`/dashboard/rooms/${item.roomId}`)
+      return
+    }
+    router.push("/dashboard#command-center")
+  }
 
   return (
     <aside className="fixed top-0 right-0 z-40 hidden h-screen md:flex">
@@ -365,16 +387,20 @@ export function RightSidebar() {
                 <p className="text-sm text-muted-foreground">No notifications yet.</p>
               ) : (
                 notifications.items.map((item) => (
-                  <article
+                  <button
                     key={item.id}
-                    className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2"
+                    type="button"
+                    onClick={() => {
+                      void openNotification(item)
+                    }}
+                    className="w-full rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-left transition-colors hover:bg-cyan-500/10"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium">{item.title}</p>
                       {!item.readAt ? <Badge variant="secondary">new</Badge> : null}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{item.message}</p>
-                  </article>
+                  </button>
                 ))
               )}
             </div>

@@ -15,6 +15,26 @@ type RoomTaskChatApiShape = {
     { sessionToken: string; roomId: Id<"rooms">; taskId: string; body: string },
     { sent: boolean }
   >
+  markThreadRead: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms">; taskId: string; readAt: number },
+    { updated: boolean }
+  >
+  listTaskThreadSummaries: FunctionReference<
+    "query",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms"> },
+    Array<{
+      taskId: string
+      latestMessageAt?: number
+      latestAuthorUserId?: string
+      latestAuthorName?: string
+      latestBody?: string
+      messageCount: number
+      unreadCount: number
+    }>
+  >
   shareFile: FunctionReference<
     "mutation",
     "public",

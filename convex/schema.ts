@@ -175,6 +175,15 @@ export default defineSchema({
   })
     .index("by_room_task_createdAt", ["roomId", "taskId", "createdAt"])
     .index("by_task_createdAt", ["taskId", "createdAt"]),
+  roomTaskThreadReads: defineTable({
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    userId: v.id("users"),
+    lastReadAt: v.number(),
+  })
+    .index("by_room_user_task", ["roomId", "userId", "taskId"])
+    .index("by_room_user", ["roomId", "userId"])
+    .index("by_room_task", ["roomId", "taskId"]),
   roomInvites: defineTable({
     roomId: v.id("rooms"),
     email: v.string(),
