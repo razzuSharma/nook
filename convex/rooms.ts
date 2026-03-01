@@ -78,6 +78,9 @@ async function joinRoom(
   if (!room) {
     throw new Error("Room not found.")
   }
+  if (room.archivedAt) {
+    throw new Error("This room is archived.")
+  }
 
   const existing = await ctx.db
     .query("roomMembers")
@@ -265,6 +268,172 @@ export const updateSettings = mutation({
   },
 })
 
+export const archive = mutation({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireAdminMembership(ctx, args.roomId, user._id as string)
+
+    const room = await ctx.db.get(args.roomId)
+    if (!room) {
+      throw new Error("Room not found.")
+    }
+    if (room.archivedAt) {
+      return { archived: true }
+    }
+
+    await ctx.db.patch(room._id, {
+      archivedAt: Date.now(),
+    })
+
+    return { archived: true }
+  },
+})
+
+export const unarchive = mutation({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireAdminMembership(ctx, args.roomId, user._id as string)
+
+    const room = await ctx.db.get(args.roomId)
+    if (!room) {
+      throw new Error("Room not found.")
+    }
+
+    await ctx.db.patch(room._id, {
+      archivedAt: undefined,
+    })
+
+    return { archived: false }
+  },
+})
+
+export const deleteRoom = mutation({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+    confirmationName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireAdminMembership(ctx, args.roomId, user._id as string)
+
+    const room = await ctx.db.get(args.roomId)
+    if (!room) {
+      throw new Error("Room not found.")
+    }
+    if (!room.archivedAt) {
+      throw new Error("Archive the room before deleting it.")
+    }
+    if (args.confirmationName.trim() !== room.name) {
+      throw new Error("Room name confirmation does not match.")
+    }
+
+    const [
+      memberships,
+      pins,
+      tasks,
+      invites,
+      focusPresence,
+      focusSessions,
+    ] = await Promise.all([
+      ctx.db
+        .query("roomMembers")
+        .withIndex("by_room", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+      ctx.db
+        .query("roomPins")
+        .withIndex("by_room_user", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+      ctx.db
+        .query("roomTasks")
+        .withIndex("by_room_order", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+      ctx.db
+        .query("roomInvites")
+        .withIndex("by_room_status", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+      ctx.db
+        .query("roomFocusPresence")
+        .withIndex("by_room_updatedAt", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+      ctx.db
+        .query("roomFocusSessions")
+        .withIndex("by_room_completedAt", (query) => query.eq("roomId", args.roomId))
+        .collect(),
+    ])
+
+    for (const membership of memberships) {
+      await ctx.db.delete(membership._id)
+    }
+    for (const pin of pins) {
+      await ctx.db.delete(pin._id)
+    }
+    for (const invite of invites) {
+      await ctx.db.delete(invite._id)
+    }
+    for (const presence of focusPresence) {
+      await ctx.db.delete(presence._id)
+    }
+    for (const session of focusSessions) {
+      await ctx.db.delete(session._id)
+    }
+
+    for (const task of tasks) {
+      const [events, messages, files, notifications] = await Promise.all([
+        ctx.db
+          .query("roomTaskEvents")
+          .withIndex("by_room_task_createdAt", (query) =>
+            query.eq("roomId", args.roomId).eq("taskId", task.taskId)
+          )
+          .collect(),
+        ctx.db
+          .query("roomTaskMessages")
+          .withIndex("by_room_task_createdAt", (query) =>
+            query.eq("roomId", args.roomId).eq("taskId", task.taskId)
+          )
+          .collect(),
+        ctx.db
+          .query("roomTaskFiles")
+          .withIndex("by_room_task_createdAt", (query) =>
+            query.eq("roomId", args.roomId).eq("taskId", task.taskId)
+          )
+          .collect(),
+        ctx.db
+          .query("userNotifications")
+          .withIndex("by_room_task", (query) =>
+            query.eq("roomId", args.roomId).eq("taskId", task.taskId)
+          )
+          .collect(),
+      ])
+
+      for (const event of events) {
+        await ctx.db.delete(event._id)
+      }
+      for (const message of messages) {
+        await ctx.db.delete(message._id)
+      }
+      for (const file of files) {
+        await ctx.db.delete(file._id)
+      }
+      for (const notification of notifications) {
+        await ctx.db.delete(notification._id)
+      }
+      await ctx.db.delete(task._id)
+    }
+
+    await ctx.db.delete(room._id)
+    return { deleted: true }
+  },
+})
+
 export const joinedRoomIdsByUser = query({
   args: {
     userId: v.string(),
@@ -438,6 +607,7 @@ export const listMembersByRoom = query({
           userId: membership.userId,
           role: membership.role,
           name: memberUser?.name ?? "Unknown User",
+          username: memberUser?.username ?? "",
           email: memberUser?.email ?? "",
           avatarKey: memberUser?.avatarKey ?? "avatar-1",
         }

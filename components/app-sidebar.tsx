@@ -8,6 +8,7 @@ import {
   BarChart3,
   Bell,
   BookmarkCheck,
+  ChevronRight,
   ClipboardList,
   Command,
   Sparkles,
@@ -17,6 +18,7 @@ import {
 import type { Id } from "@/convex/_generated/dataModel"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/providers/auth-provider"
 
@@ -45,16 +47,6 @@ const data = {
       icon: Command,
     },
     {
-      title: "Today Plan",
-      url: "/dashboard#today-plan",
-      icon: ClipboardList,
-    },
-    {
-      title: "Notifications",
-      url: "/dashboard#command-center",
-      icon: Bell,
-    },
-    {
       title: "Saved Tasks",
       url: "/dashboard/saved-tasks",
       icon: BookmarkCheck,
@@ -77,16 +69,16 @@ const data = {
       icon: Timer,
     },
   ],
-  teams: [
+  dashboardRefs: [
     {
-      title: "Kore API",
-      url: "#",
-      icon: Users,
+      title: "Today Plan",
+      url: "/dashboard#today-plan",
+      icon: ClipboardList,
     },
     {
-      title: "Design Systems",
-      url: "#",
-      icon: Sparkles,
+      title: "Notifications",
+      url: "/dashboard#command-center",
+      icon: Bell,
     },
   ],
 }
@@ -94,6 +86,15 @@ const data = {
 type RoomListItem = {
   _id: Id<"rooms">
   name: string
+  icon?: "code" | "rocket" | "cpu" | "sparkles"
+  archivedAt?: number
+}
+
+function roomDotClass(icon?: RoomListItem["icon"]) {
+  if (icon === "rocket") return "bg-emerald-400"
+  if (icon === "cpu") return "bg-amber-400"
+  if (icon === "code") return "bg-fuchsia-400"
+  return "bg-cyan-400"
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -115,7 +116,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       ),
     [pinnedRoomIdsQuery, roomDocs]
   )
-  const recentRooms = React.useMemo(() => (roomDocs ?? []).slice(0, 3), [roomDocs])
+  const recentRooms = React.useMemo(
+    () => (roomDocs ?? []).filter((room) => !room.archivedAt).slice(0, 3),
+    [roomDocs]
+  )
 
   React.useEffect(() => {
     const readHash = () => {
@@ -250,6 +254,40 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
+            {!isIconCollapsed ? (
+              <div className="mt-2 space-y-1 rounded-lg border border-cyan-500/10 bg-background/15 px-2 py-2">
+                {data.dashboardRefs.map((item) => (
+                  <Link
+                    key={item.title}
+                    href={item.url}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[color:var(--nook-sidebar-foreground-muted)] transition-colors hover:bg-[color:var(--nook-sidebar-active)] hover:text-[color:var(--nook-sidebar-foreground)]",
+                      isNavItemActive(item.title, item.url) &&
+                        "bg-[color:var(--nook-sidebar-active)] text-[color:var(--nook-sidebar-foreground)]"
+                    )}
+                  >
+                    <item.icon className="size-4" />
+                    <span>{item.title}</span>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <SidebarMenu className="mt-2">
+                {data.dashboardRefs.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isNavItemActive(item.title, item.url)}
+                    >
+                      <Link href={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            )}
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
@@ -274,31 +312,44 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <span>Focus Mode</span>
                   </SidebarMenuButton>
                 ) : (
-                  <div className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5">
-                    <span className="inline-flex items-center gap-2 text-sm">
-                      <Timer className="size-4" />
-                      <span>Focus Mode</span>
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={isFocusModeActive}
-                      onClick={() => {
-                        router.push(isFocusModeActive ? "/dashboard" : "/dashboard/focus")
-                      }}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  <button
+                    type="button"
+                    onClick={() => {
+                      router.push(isFocusModeActive ? "/dashboard" : "/dashboard/focus")
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors",
+                      isFocusModeActive
+                        ? "border-cyan-500/30 bg-cyan-500/12 text-[color:var(--nook-sidebar-foreground)]"
+                        : "border-cyan-500/12 bg-background/20 text-[color:var(--nook-sidebar-foreground-muted)] hover:bg-[color:var(--nook-sidebar-active)] hover:text-[color:var(--nook-sidebar-foreground)]"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "flex size-9 items-center justify-center rounded-lg border",
                         isFocusModeActive
-                          ? "bg-cyan-500"
-                          : "bg-slate-300 dark:bg-slate-700"
-                      }`}
+                          ? "border-cyan-400/40 bg-cyan-400/15"
+                          : "border-cyan-500/15 bg-background/30"
+                      )}
                     >
-                      <span
-                        className={`inline-block size-4 transform rounded-full bg-white transition-transform ${
-                          isFocusModeActive ? "translate-x-4" : "translate-x-0.5"
-                        }`}
-                      />
-                    </button>
-                  </div>
+                      <Timer className="size-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium">Focus Mode</span>
+                    </span>
+                    <span
+                      type="button"
+                      className={cn(
+                        "rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
+                        isFocusModeActive
+                          ? "border-cyan-400/40 bg-cyan-400/15 text-[color:var(--nook-sidebar-foreground)]"
+                          : "border-cyan-500/15 bg-background/35"
+                      )}
+                    >
+                      {isFocusModeActive ? "Live" : "Enter"}
+                    </span>
+                    <ChevronRight className="size-4 opacity-70" />
+                  </button>
                 )}
               </SidebarMenuItem>
             </SidebarMenu>
@@ -317,6 +368,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       }}
                     >
                       <Command />
+                      <span className={cn("size-2 rounded-full", roomDotClass(room.icon))} />
                       <span className="line-clamp-2 break-words">{room.name}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -354,23 +406,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             </SidebarGroupContent>
           </SidebarGroup>
         ) : null}
-        <SidebarGroup>
-          <SidebarGroupLabel>TEAMS</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {data.teams.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <a href={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
         <div className="mt-auto p-2 text-[11px] text-[color:var(--nook-sidebar-foreground-muted)] group-data-[collapsible=icon]:hidden">
           Stay in flow mode.
         </div>

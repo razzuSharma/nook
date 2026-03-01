@@ -10,7 +10,7 @@ type NotificationsApiShape = {
       unreadCount: number
       items: Array<{
         id: string
-        type: "task_assigned"
+        type: "task_assigned" | "task_mentioned"
         title: string
         message: string
         roomId?: string

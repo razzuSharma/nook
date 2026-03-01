@@ -68,6 +68,24 @@ type RoomsApiShape = {
     },
     { updated: boolean }
   >
+  archive: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms"> },
+    { archived: boolean }
+  >
+  unarchive: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms"> },
+    { archived: boolean }
+  >
+  deleteRoom: FunctionReference<
+    "mutation",
+    "public",
+    { sessionToken: string; roomId: Id<"rooms">; confirmationName: string },
+    { deleted: boolean }
+  >
   listMembersByRoom: FunctionReference<
     "query",
     "public",

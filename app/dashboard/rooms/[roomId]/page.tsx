@@ -51,6 +51,7 @@ type RoomDoc = {
   membersCount: number
   membersMax: number
   joinCode?: string
+  archivedAt?: number
 }
 
 type RoomInvite = {
@@ -90,6 +91,9 @@ export default function RoomPage() {
   const createInvite = useMutation(roomInvitesApi.create)
   const revokeInvite = useMutation(roomInvitesApi.revoke)
   const updateRoomSettings = useMutation(roomsApi.updateSettings)
+  const archiveRoomInDb = useMutation(roomsApi.archive)
+  const unarchiveRoomInDb = useMutation(roomsApi.unarchive)
+  const deleteRoomInDb = useMutation(roomsApi.deleteRoom)
   const [inviteEmail, setInviteEmail] = React.useState("")
   const [inviteRole, setInviteRole] = React.useState<"viewer" | "member" | "admin">(
     "member"
@@ -106,6 +110,9 @@ export default function RoomPage() {
   const [settingsMessage, setSettingsMessage] = React.useState<string | null>(null)
   const [settingsError, setSettingsError] = React.useState<string | null>(null)
   const [joiningRoom, setJoiningRoom] = React.useState(false)
+  const [archivePending, setArchivePending] = React.useState(false)
+  const [deletePending, setDeletePending] = React.useState(false)
+  const [deleteConfirmationName, setDeleteConfirmationName] = React.useState("")
 
   const room = React.useMemo(
     () => rooms?.find((item) => item._id === roomId),
@@ -248,7 +255,7 @@ export default function RoomPage() {
   }, [canManageInvites])
 
   const sendInvite = React.useCallback(async () => {
-    if (!room || !sessionToken || !canManageInvites) return
+    if (!room || !sessionToken || !canManageInvites || room.archivedAt) return
     setInviteError(null)
     setInviteLink(null)
     try {
@@ -300,7 +307,7 @@ export default function RoomPage() {
   ])
 
   const joinRoom = React.useCallback(async () => {
-    if (!room || !user || joiningRoom) return
+    if (!room || !user || joiningRoom || room.archivedAt) return
     try {
       setJoiningRoom(true)
       await joinRoomInDb({
@@ -316,6 +323,65 @@ export default function RoomPage() {
     }
   }, [joiningRoom, joinRoomInDb, room, router, user])
 
+  const toggleArchiveRoom = React.useCallback(async () => {
+    if (!room || !sessionToken || !canManageRoomSettings || archivePending) return
+    try {
+      setArchivePending(true)
+      if (room.archivedAt) {
+        await unarchiveRoomInDb({
+          sessionToken,
+          roomId: room._id,
+        })
+        toast.success("Room restored.")
+      } else {
+        await archiveRoomInDb({
+          sessionToken,
+          roomId: room._id,
+        })
+        toast.success("Room archived.")
+      }
+      router.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to update room state.")
+    } finally {
+      setArchivePending(false)
+    }
+  }, [
+    archivePending,
+    archiveRoomInDb,
+    canManageRoomSettings,
+    room,
+    router,
+    sessionToken,
+    unarchiveRoomInDb,
+  ])
+
+  const deleteRoom = React.useCallback(async () => {
+    if (!room || !sessionToken || !canManageRoomSettings || deletePending) return
+    try {
+      setDeletePending(true)
+      await deleteRoomInDb({
+        sessionToken,
+        roomId: room._id,
+        confirmationName: deleteConfirmationName,
+      })
+      toast.success("Room deleted permanently.")
+      router.push("/dashboard")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete room.")
+    } finally {
+      setDeletePending(false)
+    }
+  }, [
+    canManageRoomSettings,
+    deleteConfirmationName,
+    deletePending,
+    deleteRoomInDb,
+    room,
+    router,
+    sessionToken,
+  ])
+
   return (
     <SidebarProvider
       style={
@@ -329,8 +395,8 @@ export default function RoomPage() {
       <SidebarInset className="overflow-hidden bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.2),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#f4fbfc_0%,#eef9fb_100%)] dark:bg-[radial-gradient(circle_at_20%_-10%,rgba(6,182,212,0.22),transparent_35%),radial-gradient(circle_at_95%_5%,rgba(20,184,166,0.2),transparent_35%),linear-gradient(180deg,#05171a_0%,#031116_100%)]">
         <SiteHeader
           currentPage={room ? room.name : "Room"}
-          actionLabel={canManageInvites ? "Invite" : ""}
-          actionEventName={canManageInvites ? "nook:open-room-invite" : ""}
+          actionLabel={canManageInvites && !room?.archivedAt ? "Invite" : ""}
+          actionEventName={canManageInvites && !room?.archivedAt ? "nook:open-room-invite" : ""}
         />
         <div className="flex flex-1 flex-col px-4 py-5 md:px-6 md:py-6 lg:pr-20">
           <div className="mx-auto w-full max-w-6xl space-y-5">
@@ -363,6 +429,11 @@ export default function RoomPage() {
                     {room.name}
                   </h1>
                   <p className="mt-2 text-muted-foreground">{room.description}</p>
+                  {room.archivedAt ? (
+                    <Badge variant="secondary" className="mt-3">
+                      Archived
+                    </Badge>
+                  ) : null}
                   {currentRole ? (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Your role: <span className="font-medium capitalize">{currentRole}</span>
@@ -386,6 +457,7 @@ export default function RoomPage() {
                     <Button
                       type="button"
                       className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                      disabled={Boolean(room.archivedAt)}
                       onClick={() => {
                         const query = new URLSearchParams({ roomId: room._id })
                         router.push(`/dashboard/focus?${query.toString()}`)
@@ -453,7 +525,7 @@ export default function RoomPage() {
                     <CardContent className="space-y-2 text-sm text-muted-foreground">
                       <p>Join this room to see live focus presence and room tasks.</p>
                       <div className="flex flex-wrap items-center gap-2">
-                        {(room.access ?? "public") === "public" ? (
+                        {(room.access ?? "public") === "public" && !room.archivedAt ? (
                           <Button
                             type="button"
                             onClick={() => {
@@ -464,6 +536,8 @@ export default function RoomPage() {
                           >
                             {joiningRoom ? "Joining..." : "Join Room"}
                           </Button>
+                        ) : room.archivedAt ? (
+                          <p className="text-xs">This room is archived and cannot be newly joined.</p>
                         ) : (
                           <p className="text-xs">
                             This room is {(room.access ?? "public") === "invite_only" ? "invite-only" : "private"}. Ask an admin for an invite.
@@ -662,11 +736,72 @@ export default function RoomPage() {
                           onClick={() => {
                             void saveRoomSettings()
                           }}
-                          disabled={!canManageRoomSettings}
+                          disabled={!canManageRoomSettings || Boolean(room.archivedAt)}
                           className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
                         >
                           Save Settings
                         </Button>
+                        {canManageRoomSettings ? (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                            <p className="text-sm font-medium">
+                              {room.archivedAt ? "Archived Room" : "Archive Room"}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {room.archivedAt
+                                ? "Restore this room to make it active again."
+                                : "Archive this room to remove it from active dashboards without losing its data."}
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={archivePending}
+                                onClick={() => {
+                                  void toggleArchiveRoom()
+                                }}
+                              >
+                                {archivePending
+                                  ? room.archivedAt
+                                    ? "Restoring..."
+                                    : "Archiving..."
+                                  : room.archivedAt
+                                    ? "Restore Room"
+                                    : "Archive Room"}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {canManageRoomSettings ? (
+                          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                            <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                              Delete Room
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Permanent delete is only available after the room is archived. Type the room name to confirm.
+                            </p>
+                            <Input
+                              value={deleteConfirmationName}
+                              onChange={(event) => setDeleteConfirmationName(event.target.value)}
+                              placeholder={room.name}
+                              className="mt-3"
+                            />
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              className="mt-3"
+                              disabled={
+                                !room.archivedAt ||
+                                deletePending ||
+                                deleteConfirmationName.trim() !== room.name
+                              }
+                              onClick={() => {
+                                void deleteRoom()
+                              }}
+                            >
+                              {deletePending ? "Deleting..." : "Delete Permanently"}
+                            </Button>
+                          </div>
+                        ) : null}
                       </CardContent>
                     </Card>
                   </>
