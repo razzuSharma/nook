@@ -338,7 +338,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       <span className="block text-sm font-medium">Focus Mode</span>
                     </span>
                     <span
-                      type="button"
                       className={cn(
                         "rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
                         isFocusModeActive
