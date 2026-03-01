@@ -63,6 +63,7 @@ type RoomListItem = {
   createdAt: number
   joinCode?: string
   icon: RoomIconKey
+  archivedAt?: number
 }
 type RoomSort = "recent" | "mostJoined"
 
@@ -206,7 +207,7 @@ export function RoomsGrid() {
     Number.parseInt(membersMax, 10) >= 2
 
   const visibleRooms = React.useMemo(() => {
-    const sorted = [...(roomDocs ?? [])]
+    const sorted = [...(roomDocs ?? [])].filter((room) => !room.archivedAt)
     if (sortBy === "mostJoined") {
       sorted.sort((left, right) => right.membersCount - left.membersCount)
       return sorted

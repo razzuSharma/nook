@@ -65,7 +65,7 @@ export default defineSchema({
     .index("by_user", ["userId"]),
   userNotifications: defineTable({
     userId: v.id("users"),
-    type: v.union(v.literal("task_assigned")),
+    type: v.union(v.literal("task_assigned"), v.literal("task_mentioned")),
     title: v.string(),
     message: v.string(),
     roomId: v.optional(v.id("rooms")),
@@ -92,6 +92,7 @@ export default defineSchema({
       v.literal("cpu"),
       v.literal("sparkles")
     ),
+    archivedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_createdAt", ["createdAt"])

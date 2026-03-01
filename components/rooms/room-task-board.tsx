@@ -98,6 +98,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { avatarSrcForKey } from "@/lib/avatar-options"
+import { buildMentionHandle, normalizeMentionHandle } from "@/lib/mention-utils"
 import { cn } from "@/lib/utils"
 
 type TaskStatus = "todo" | "working" | "blocked" | "completed"
@@ -108,6 +109,7 @@ type DuePreset = "none" | "today" | "tomorrow" | "this_week" | "next_week" | "cu
 type RoomMember = {
   userId: string
   name: string
+  username: string
   email: string
   role: "viewer" | "member" | "admin"
   avatarKey: string
@@ -257,6 +259,42 @@ function priorityClass(priority: TaskPriority) {
   if (priority === "high") return "bg-red-500/15 text-red-700 dark:text-red-300"
   if (priority === "medium") return "bg-amber-500/15 text-amber-700 dark:text-amber-300"
   return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+}
+
+function getActiveMentionDraft(value: string, caret: number) {
+  const beforeCaret = value.slice(0, caret)
+  const match = beforeCaret.match(/(?:^|\s)@([a-z0-9._-]{0,32})$/i)
+  if (!match) return null
+
+  return {
+    query: normalizeMentionHandle(match[1] ?? ""),
+    start: beforeCaret.length - (match[1]?.length ?? 0) - 1,
+    end: caret,
+  }
+}
+
+function renderMessageBody(body: string, mentionHandles: Set<string>) {
+  const parts = body.split(/(@[a-z0-9][a-z0-9._-]{0,31})/gi)
+
+  return parts.map((part, index) => {
+    if (!part.startsWith("@")) {
+      return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>
+    }
+
+    const handle = normalizeMentionHandle(part.slice(1))
+    if (!mentionHandles.has(handle)) {
+      return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>
+    }
+
+    return (
+      <span
+        key={`${part}-${index}`}
+        className="rounded bg-cyan-500/15 px-1 py-0.5 font-medium text-cyan-800 dark:text-cyan-200"
+      >
+        {part}
+      </span>
+    )
+  })
 }
 
 function cardStatusClass(status: TaskStatus) {
@@ -659,6 +697,7 @@ export function RoomTaskBoard({
   const [threadTaskId, setThreadTaskId] = React.useState<string | null>(null)
   const [threadTab, setThreadTab] = React.useState<"chat" | "files" | "history">("chat")
   const [threadMessage, setThreadMessage] = React.useState("")
+  const [threadMessageCaret, setThreadMessageCaret] = React.useState(0)
   const [threadFileUrl, setThreadFileUrl] = React.useState("")
   const [threadUploadFile, setThreadUploadFile] = React.useState<File | null>(null)
   const [isUploadingThreadFile, setIsUploadingThreadFile] = React.useState(false)
@@ -668,6 +707,8 @@ export function RoomTaskBoard({
     Record<string, string[]>
   >({})
   const [threadError, setThreadError] = React.useState<string | null>(null)
+  const [activeMentionIndex, setActiveMentionIndex] = React.useState(0)
+  const threadMessageInputRef = React.useRef<HTMLInputElement | null>(null)
 
   React.useEffect(() => {
     setStatusFilter(initialStatusFilter)
@@ -683,6 +724,54 @@ export function RoomTaskBoard({
       ? { sessionToken, roomId, taskId: threadTaskId }
       : "skip"
   ) as TaskThreadData | undefined
+
+  const roomMentionMembers = React.useMemo(
+    () =>
+      members
+        .map((member) => ({
+          ...member,
+          handle: buildMentionHandle({
+            username: member.username,
+            name: member.name,
+            email: member.email,
+            userId: member.userId,
+          }),
+        }))
+        .filter((member, index, all) => {
+          return (
+            member.userId !== user?.id &&
+            all.findIndex((item) => item.handle === member.handle) === index
+          )
+        }),
+    [members, user?.id]
+  )
+  const roomMentionHandleSet = React.useMemo(
+    () => new Set(roomMentionMembers.map((member) => member.handle)),
+    [roomMentionMembers]
+  )
+  const activeMentionDraft = React.useMemo(
+    () => getActiveMentionDraft(threadMessage, threadMessageCaret),
+    [threadMessage, threadMessageCaret]
+  )
+  const mentionSuggestions = React.useMemo(() => {
+    if (!activeMentionDraft) return []
+    if (!activeMentionDraft.query) return roomMentionMembers.slice(0, 6)
+
+    return roomMentionMembers
+      .filter((member) => {
+        const query = activeMentionDraft.query
+        return (
+          member.handle.includes(query) ||
+          member.name.toLowerCase().includes(query) ||
+          member.email.toLowerCase().includes(query)
+        )
+      })
+      .slice(0, 6)
+  }, [activeMentionDraft, roomMentionMembers])
+
+  React.useEffect(() => {
+    setActiveMentionIndex(0)
+  }, [activeMentionDraft?.query])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -770,9 +859,24 @@ export function RoomTaskBoard({
         body,
       })
       setThreadMessage("")
+      setThreadMessageCaret(0)
     } catch (error) {
       setThreadError(error instanceof Error ? error.message : "Unable to send message.")
     }
+  }
+
+  function applyMention(memberHandle: string) {
+    if (!activeMentionDraft) return
+
+    const nextMessage = `${threadMessage.slice(0, activeMentionDraft.start)}@${memberHandle} ${threadMessage.slice(activeMentionDraft.end)}`
+    const nextCaret = activeMentionDraft.start + memberHandle.length + 2
+    setThreadMessage(nextMessage)
+    setThreadMessageCaret(nextCaret)
+
+    window.requestAnimationFrame(() => {
+      threadMessageInputRef.current?.focus()
+      threadMessageInputRef.current?.setSelectionRange(nextCaret, nextCaret)
+    })
   }
 
   async function postThreadFile() {
@@ -1950,7 +2054,9 @@ export function RoomTaskBoard({
                               {new Date(message.createdAt).toLocaleTimeString()}
                             </span>
                           </div>
-                          <p className="text-sm">{message.body}</p>
+                          <p className="text-sm">
+                            {renderMessageBody(message.body, roomMentionHandleSet)}
+                          </p>
                           <div className="mt-2 flex items-center gap-1">
                             {["👍", "✅", "🔥"].map((emoji) => {
                               const active = reactions.includes(emoji)
@@ -1988,11 +2094,83 @@ export function RoomTaskBoard({
               >
                 <div className="relative flex-1">
                   <Input
+                    ref={threadMessageInputRef}
                     value={threadMessage}
-                    onChange={(event) => setThreadMessage(event.target.value)}
-                    placeholder="Write a message about this task..."
+                    onChange={(event) => {
+                      setThreadMessage(event.target.value)
+                      setThreadMessageCaret(event.target.selectionStart ?? event.target.value.length)
+                    }}
+                    onClick={(event) => {
+                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
+                    }}
+                    onKeyUp={(event) => {
+                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
+                    }}
+                    onSelect={(event) => {
+                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
+                    }}
+                    onKeyDown={(event) => {
+                      if (mentionSuggestions.length === 0) return
+
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault()
+                        setActiveMentionIndex((prev) => (prev + 1) % mentionSuggestions.length)
+                        return
+                      }
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault()
+                        setActiveMentionIndex((prev) =>
+                          prev === 0 ? mentionSuggestions.length - 1 : prev - 1
+                        )
+                        return
+                      }
+                      if (event.key === "Enter" || event.key === "Tab") {
+                        event.preventDefault()
+                        applyMention(mentionSuggestions[activeMentionIndex]?.handle ?? "")
+                        return
+                      }
+                      if (event.key === "Escape") {
+                        setActiveMentionIndex(0)
+                      }
+                    }}
+                    placeholder="Write a message about this task... Use @ to mention someone."
                     className="pr-20"
                   />
+                  {mentionSuggestions.length > 0 ? (
+                    <div className="absolute inset-x-0 bottom-full z-10 mb-2 rounded-md border border-[color:var(--nook-sidebar-border)] bg-background shadow-lg">
+                      <ul className="max-h-64 overflow-y-auto py-1">
+                        {mentionSuggestions.map((member, index) => (
+                          <li key={member.userId}>
+                            <button
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent",
+                                index === activeMentionIndex && "bg-accent"
+                              )}
+                              onMouseDown={(event) => {
+                                event.preventDefault()
+                                applyMention(member.handle)
+                              }}
+                            >
+                              <Avatar className="size-7">
+                                <AvatarImage
+                                  src={avatarSrcForKey(member.avatarKey)}
+                                  alt={member.name}
+                                />
+                                <AvatarFallback>{member.name.slice(0, 2)}</AvatarFallback>
+                              </Avatar>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium">{member.name}</span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  @{member.handle}
+                                </span>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
                     <button
                       type="button"

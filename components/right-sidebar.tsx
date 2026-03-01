@@ -4,13 +4,10 @@ import * as React from "react"
 import { useMutation, useQuery } from "convex/react"
 import {
   Bell,
-  Calendar,
   CalendarClock,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   ClipboardList,
-  NotebookPen,
   Target,
   Users,
 } from "lucide-react"
@@ -77,7 +74,6 @@ type ViewerNotificationResult = {
   }>
 }
 
-const NOTES_STORAGE_KEY = "nook.right.sidebar.notes.v1"
 const COLLAPSED_STORAGE_KEY = "nook.right.sidebar.collapsed.v1"
 
 function startOfToday() {
@@ -105,7 +101,6 @@ export function RightSidebar() {
   const [collapsed, setCollapsed] = React.useState(false)
   const [hasLoadedCollapsedPref, setHasLoadedCollapsedPref] = React.useState(false)
   const [notificationsOpen, setNotificationsOpen] = React.useState(false)
-  const [notes, setNotes] = React.useState("")
   const collapsedStorageKey = React.useMemo(
     () => `${COLLAPSED_STORAGE_KEY}:${user?.id ?? "guest"}`,
     [user?.id]
@@ -131,11 +126,6 @@ export function RightSidebar() {
   const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
 
   React.useEffect(() => {
-    const saved = window.localStorage.getItem(NOTES_STORAGE_KEY)
-    if (saved) setNotes(saved)
-  }, [])
-
-  React.useEffect(() => {
     const saved = window.localStorage.getItem(collapsedStorageKey)
     if (saved === "1") {
       setCollapsed(true)
@@ -145,10 +135,6 @@ export function RightSidebar() {
     }
     setHasLoadedCollapsedPref(true)
   }, [collapsedStorageKey])
-
-  React.useEffect(() => {
-    window.localStorage.setItem(NOTES_STORAGE_KEY, notes)
-  }, [notes])
 
   React.useEffect(() => {
     if (!hasLoadedCollapsedPref) return
@@ -211,7 +197,6 @@ export function RightSidebar() {
 
   const actions = [
     { icon: Bell, label: "Notifications", onClick: () => setNotificationsOpen(true) },
-    { icon: Calendar, label: "Calendar" },
   ]
 
   return (
@@ -274,19 +259,6 @@ export function RightSidebar() {
                   </div>
                 ))}
               </div>
-            </section>
-
-            <section className="rounded-xl border border-cyan-500/20 bg-background/60 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                <NotebookPen className="size-4 text-cyan-700 dark:text-cyan-300" />
-                Quick Notes
-              </div>
-              <textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Jot a thought..."
-                className="min-h-24 w-full rounded-md border border-cyan-500/20 bg-background/70 px-2 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
-              />
             </section>
 
             <section className="rounded-xl border border-cyan-500/20 bg-background/60 p-3">
@@ -359,24 +331,6 @@ export function RightSidebar() {
           </TooltipProvider>
         </div>
 
-        <div className="flex flex-col items-center py-6">
-          <TooltipProvider delayDuration={0}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="flex size-10 items-center justify-center rounded-full border border-cyan-500/20 text-muted-foreground transition-colors hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400"
-                >
-                  <CircleHelp className="size-5" />
-                  <span className="sr-only">Help</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="bg-slate-900 text-slate-50">
-                <p>Help & Support</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
       </div>
       <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
         <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-md">

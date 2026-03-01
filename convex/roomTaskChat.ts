@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import type { Id } from "./_generated/dataModel"
 import { v } from "convex/values"
+import { buildMentionHandle, extractMentionHandles } from "../lib/mention-utils"
 
 function toHex(bytes: Uint8Array) {
   return Array.from(bytes)
@@ -79,6 +80,33 @@ async function requireTaskInRoom(
   if (!task) {
     throw new Error("Task not found in this room.")
   }
+
+  return task
+}
+
+async function getActiveRoomMembersWithUsers(
+  ctx: QueryCtx | MutationCtx,
+  roomId: Id<"rooms">
+) {
+  const memberships = await ctx.db
+    .query("roomMembers")
+    .withIndex("by_room", (indexQuery) => indexQuery.eq("roomId", roomId))
+    .collect()
+
+  const activeMemberships = memberships.filter(
+    (membership) => membership.status === "active"
+  )
+
+  return Promise.all(
+    activeMemberships.map(async (membership) => {
+      const normalizedUserId = ctx.db.normalizeId("users", membership.userId)
+      const user = normalizedUserId ? await ctx.db.get(normalizedUserId) : null
+      return {
+        membership,
+        user,
+      }
+    })
+  )
 }
 
 export const listThread = query({
@@ -201,7 +229,7 @@ export const sendMessage = mutation({
   handler: async (ctx, args) => {
     const user = await requireUserBySession(ctx, args.sessionToken)
     await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
-    await requireTaskInRoom(ctx, args.roomId, args.taskId)
+    const task = await requireTaskInRoom(ctx, args.roomId, args.taskId)
 
     const body = args.body.trim()
     if (!body) {
@@ -217,6 +245,37 @@ export const sendMessage = mutation({
       createdAt: now,
       updatedAt: now,
     })
+
+    const room = await ctx.db.get(args.roomId)
+    const mentionedHandles = extractMentionHandles(body)
+    if (room && mentionedHandles.length > 0) {
+      const members = await getActiveRoomMembersWithUsers(ctx, args.roomId)
+      const uniqueRecipients = new Set<string>()
+
+      for (const member of members) {
+        if (!member.user) continue
+        if (member.membership.userId === (user._id as string)) continue
+        const handle = buildMentionHandle({
+          username: member.user.username,
+          name: member.user.name,
+          email: member.user.email,
+          userId: member.membership.userId,
+        })
+        if (!mentionedHandles.includes(handle)) continue
+        if (uniqueRecipients.has(member.membership.userId)) continue
+        uniqueRecipients.add(member.membership.userId)
+
+        await ctx.db.insert("userNotifications", {
+          userId: member.user._id,
+          type: "task_mentioned",
+          title: `${user.name ?? "Someone"} mentioned you`,
+          message: `Mentioned you in "${task.title}" in ${room.name}.`,
+          roomId: args.roomId,
+          taskId: args.taskId,
+          createdAt: now,
+        })
+      }
+    }
 
     return { sent: true }
   },

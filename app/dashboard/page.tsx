@@ -12,6 +12,8 @@ import {
   ChevronUp,
   Flame,
   Pin,
+  Play,
+  Plus,
   Target,
   Timer,
 } from "lucide-react"
@@ -22,6 +24,13 @@ import { useAuth } from "@/components/providers/auth-provider"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarGroup,
+  AvatarGroupCount,
+  AvatarImage,
+} from "@/components/ui/avatar"
 import {
   Dialog,
   DialogContent,
@@ -39,6 +48,8 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar"
 import type { Id } from "@/convex/_generated/dataModel"
+import { avatarSrcForKey } from "@/lib/avatar-options"
+import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 
 const DASHBOARD_ONBOARDING_KEY = "nook.dashboard.onboarding.v1"
@@ -57,6 +68,7 @@ type RoomListItem = {
   membersCount: number
   membersMax?: number
   icon?: RoomIconKey
+  archivedAt?: number
 }
 
 type AssignedRoomTask = {
@@ -89,6 +101,15 @@ type FocusPresenceDoc = {
   userId: string
   status: "idle" | "focusing" | "break" | "done"
   endsAt: number | null
+}
+
+type RoomMemberDoc = {
+  userId: string
+  name: string
+  username: string
+  email: string
+  role: "viewer" | "member" | "admin"
+  avatarKey: string
 }
 
 type RoomAccess = "public" | "private" | "invite_only"
@@ -135,22 +156,35 @@ function formatPlanDue(dueAt?: number) {
 }
 
 function Sparkline({ points }: { points: number[] }) {
+  const gradientId = React.useId()
   const width = 88
-  const height = 22
+  const height = 28
   const min = Math.min(...points)
   const max = Math.max(...points)
   const range = max - min || 1
-  const path = points
+  const coordinates = points
     .map((point, index) => {
       const x = (index / (points.length - 1)) * width
-      const y = height - ((point - min) / range) * height
-      return `${index === 0 ? "M" : "L"}${x},${y}`
+      const y = height - ((point - min) / range) * (height - 4) - 2
+      return { x, y }
+    })
+  const path = coordinates
+    .map((point, index) => {
+      return `${index === 0 ? "M" : "L"}${point.x},${point.y}`
     })
     .join(" ")
+  const areaPath = `${path} L${width},${height} L0,${height} Z`
 
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden>
-      <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
+      <defs>
+        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradientId})`} />
+      <path d={path} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
     </svg>
   )
 }
@@ -161,6 +195,13 @@ function formatDelta(current: number, previous: number, suffix = "") {
   const delta = Math.round(((current - previous) / previous) * 100)
   if (delta === 0) return `Flat${suffix}`
   return `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta)}%${suffix}`
+}
+
+function deltaTone(current: number, previous: number) {
+  if (previous <= 0 && current <= 0) return "neutral"
+  if (previous <= 0) return "positive"
+  if (current === previous) return "neutral"
+  return current > previous ? "positive" : "negative"
 }
 
 function startOfDay(timestamp: number) {
@@ -200,22 +241,75 @@ function slugifyRoomName(name: string) {
   return slug || "new-room"
 }
 
+function roomAccent(icon?: RoomIconKey) {
+  if (icon === "rocket") {
+    return {
+      border: "border-l-emerald-400",
+      glow: "hover:shadow-[0_18px_50px_-24px_rgba(16,185,129,0.55)]",
+      badge: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 border-emerald-500/25",
+      dot: "bg-emerald-400",
+      panel: "bg-emerald-500/[0.08]",
+    }
+  }
+  if (icon === "cpu") {
+    return {
+      border: "border-l-amber-400",
+      glow: "hover:shadow-[0_18px_50px_-24px_rgba(245,158,11,0.55)]",
+      badge: "bg-amber-500/15 text-amber-800 dark:text-amber-200 border-amber-500/25",
+      dot: "bg-amber-400",
+      panel: "bg-amber-500/[0.08]",
+    }
+  }
+  if (icon === "code") {
+    return {
+      border: "border-l-fuchsia-400",
+      glow: "hover:shadow-[0_18px_50px_-24px_rgba(217,70,239,0.55)]",
+      badge: "bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200 border-fuchsia-500/25",
+      dot: "bg-fuchsia-400",
+      panel: "bg-fuchsia-500/[0.08]",
+    }
+  }
+  return {
+    border: "border-l-cyan-400",
+    glow: "hover:shadow-[0_18px_50px_-24px_rgba(6,182,212,0.55)]",
+    badge: "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200 border-cyan-500/25",
+    dot: "bg-cyan-400",
+    panel: "bg-cyan-500/[0.08]",
+  }
+}
+
+function modeBadgeClass(mode?: string) {
+  const value = (mode ?? "").toLowerCase()
+  if (value.includes("build")) return "border-blue-500/30 bg-blue-500/15 text-blue-800 dark:text-blue-200"
+  if (value.includes("refin") || value.includes("design")) {
+    return "border-fuchsia-500/30 bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200"
+  }
+  if (value.includes("bug")) return "border-amber-500/30 bg-amber-500/15 text-amber-800 dark:text-amber-200"
+  return "border-cyan-500/30 bg-cyan-500/15 text-cyan-800 dark:text-cyan-200"
+}
+
 function RoomMetricsCollector({
   roomId,
   sessionToken,
   onTasks,
   onPresence,
+  onMembers,
 }: {
   roomId: Id<"rooms">
   sessionToken: string | null
   onTasks: (roomId: string, tasks: RoomTaskMetricDoc[]) => void
   onPresence: (roomId: string, presence: FocusPresenceDoc[]) => void
+  onMembers: (roomId: string, members: RoomMemberDoc[]) => void
 }) {
   const tasks = useQuery(roomTasksApi.listByRoom, { roomId }) as RoomTaskMetricDoc[] | undefined
   const presence = useQuery(
     roomFocusApi.listPresence,
     sessionToken ? { sessionToken, roomId } : "skip"
   ) as FocusPresenceDoc[] | undefined
+  const members = useQuery(
+    roomsApi.listMembersByRoom,
+    sessionToken ? { sessionToken, roomId } : "skip"
+  ) as RoomMemberDoc[] | undefined
 
   React.useEffect(() => {
     if (tasks) onTasks(String(roomId), tasks)
@@ -224,6 +318,10 @@ function RoomMetricsCollector({
   React.useEffect(() => {
     if (presence) onPresence(String(roomId), presence)
   }, [roomId, presence, onPresence])
+
+  React.useEffect(() => {
+    if (members) onMembers(String(roomId), members)
+  }, [members, onMembers, roomId])
 
   return null
 }
@@ -259,6 +357,9 @@ export default function Page() {
   >({})
   const [roomPresenceByRoom, setRoomPresenceByRoom] = React.useState<
     Record<string, FocusPresenceDoc[]>
+  >({})
+  const [roomMembersByRoom, setRoomMembersByRoom] = React.useState<
+    Record<string, RoomMemberDoc[]>
   >({})
   const [quickTask, setQuickTask] = React.useState("")
   const [nowTimestamp, setNowTimestamp] = React.useState(() => Date.now())
@@ -302,6 +403,9 @@ export default function Page() {
       prev[roomId] === presence ? prev : { ...prev, [roomId]: presence }
     )
   }, [])
+  const handleRoomMembers = React.useCallback((roomId: string, members: RoomMemberDoc[]) => {
+    setRoomMembersByRoom((prev) => (prev[roomId] === members ? prev : { ...prev, [roomId]: members }))
+  }, [])
 
   React.useEffect(() => {
     const active = new Set(joinedRoomIds.map((roomId) => String(roomId)))
@@ -312,6 +416,12 @@ export default function Page() {
       return Object.keys(next).length === Object.keys(prev).length ? prev : next
     })
     setRoomPresenceByRoom((prev) => {
+      const next = Object.fromEntries(
+        Object.entries(prev).filter(([roomId]) => active.has(roomId))
+      )
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next
+    })
+    setRoomMembersByRoom((prev) => {
       const next = Object.fromEntries(
         Object.entries(prev).filter(([roomId]) => active.has(roomId))
       )
@@ -397,8 +507,15 @@ export default function Page() {
   const joinedRooms = React.useMemo(
     () =>
       (roomDocs ?? [])
-        .filter((room) => joinedRoomIds.includes(room._id))
+        .filter((room) => joinedRoomIds.includes(room._id) && !room.archivedAt)
         .sort((left, right) => right.createdAt - left.createdAt),
+    [joinedRoomIds, roomDocs]
+  )
+  const archivedJoinedRooms = React.useMemo(
+    () =>
+      (roomDocs ?? [])
+        .filter((room) => joinedRoomIds.includes(room._id) && Boolean(room.archivedAt))
+        .sort((left, right) => (right.archivedAt ?? 0) - (left.archivedAt ?? 0)),
     [joinedRoomIds, roomDocs]
   )
 
@@ -569,7 +686,6 @@ export default function Page() {
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-        second: "2-digit",
       }),
     }
   }, [nowTimestamp])
@@ -822,15 +938,17 @@ export default function Page() {
               <h1 className="bg-linear-to-r from-teal-700 via-cyan-700 to-teal-500 bg-clip-text text-4xl font-semibold tracking-tight text-transparent dark:from-cyan-200 dark:via-teal-200 dark:to-cyan-400 md:text-5xl">
                 {greeting.text}, {firstName}.
               </h1>
-              <p className="mt-2 text-muted-foreground">
-                Ready for focused collaboration? You have {analytics.roomCount} rooms active today.
+              <p className="mt-3 text-base text-muted-foreground md:text-lg">
+                Ready for focused collaboration? You have {joinedRooms.length} rooms active today.
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">{greeting.context}</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground/80">
+                {greeting.context}
+              </p>
             </div>
 
             <section
               id="rooms-section"
-              className="mb-6 rounded-2xl border border-cyan-500/20 bg-background/75 p-4 backdrop-blur"
+              className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/75 p-5 backdrop-blur"
             >
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">Your Rooms</h2>
@@ -857,11 +975,15 @@ export default function Page() {
                   </p>
                 </div>
               ) : (
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   {joinedRooms.slice(0, 3).map((room) => (
                     <article
                       key={room._id}
-                      className="rounded-xl border border-cyan-500/25 bg-cyan-500/[0.07] p-3"
+                      className={cn(
+                        "rounded-2xl border border-cyan-500/18 border-l-4 bg-background/80 p-4 transition-all duration-200 hover:-translate-y-0.5",
+                        roomAccent(room.icon).border,
+                        roomAccent(room.icon).glow
+                      )}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -870,14 +992,32 @@ export default function Page() {
                             {room.description || "Focused collaboration room."}
                           </p>
                         </div>
-                        <Badge variant="outline" className="text-[10px] uppercase">
+                        <Badge
+                          variant="outline"
+                          className={cn("border text-[10px] uppercase", modeBadgeClass(room.mode))}
+                        >
                           {room.mode || "ROOM"}
                         </Badge>
                       </div>
-                      <div className="mt-3 flex items-center justify-between gap-2">
-                        <p className="text-xs text-muted-foreground">
-                          {room.membersCount}/{room.membersMax ?? 30} Members
-                        </p>
+                      <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <AvatarGroup>
+                            {(roomMembersByRoom[String(room._id)] ?? []).slice(0, 3).map((member) => (
+                              <Avatar key={member.userId} size="sm">
+                                <AvatarImage src={avatarSrcForKey(member.avatarKey)} alt={member.name} />
+                                <AvatarFallback>{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                              </Avatar>
+                            ))}
+                            {room.membersCount > 3 ? (
+                              <AvatarGroupCount className="size-6 text-xs">
+                                +{room.membersCount - 3}
+                              </AvatarGroupCount>
+                            ) : null}
+                          </AvatarGroup>
+                          <p className="text-xs text-muted-foreground">
+                            {room.membersCount}/{room.membersMax ?? 30} members
+                          </p>
+                        </div>
                         <Link
                           href={`/dashboard/rooms/${room._id}`}
                           className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
@@ -886,7 +1026,7 @@ export default function Page() {
                         </Link>
                       </div>
                       {room.joinCode ? (
-                        <div className="mt-2 flex items-center justify-between rounded-md border border-cyan-500/20 bg-background/70 px-2 py-1.5">
+                        <div className={cn("mt-3 flex items-center justify-between rounded-md border px-2 py-1.5", roomAccent(room.icon).badge)}>
                           <span className="font-mono text-[11px] text-muted-foreground">
                             {room.joinCode}
                           </span>
@@ -907,9 +1047,12 @@ export default function Page() {
                   ))}
                   <button
                     type="button"
-                    className="group flex min-h-36 flex-col justify-center rounded-xl border border-dashed border-cyan-500/30 bg-cyan-500/5 p-3 text-left transition-colors hover:bg-cyan-500/10"
+                    className="group flex min-h-36 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-cyan-500/35 bg-cyan-500/5 p-4 text-center transition-all hover:-translate-y-0.5 hover:bg-cyan-500/10 hover:shadow-[0_18px_50px_-24px_rgba(6,182,212,0.45)]"
                     onClick={() => setCreateRoomOpen(true)}
                   >
+                    <span className="mb-3 flex size-12 items-center justify-center rounded-full border border-dashed border-cyan-500/35 bg-background/70 text-cyan-700 dark:text-cyan-300">
+                      <Plus className="size-5" />
+                    </span>
                     <p className="text-base font-semibold">Create a new room</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Start a focused collaboration session.
@@ -938,6 +1081,33 @@ export default function Page() {
                   {joiningRoom ? "Joining..." : "Join Room"}
                 </Button>
               </form>
+              {archivedJoinedRooms.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-cyan-500/15 bg-background/60 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">Archived Rooms</p>
+                    <Badge variant="secondary">{archivedJoinedRooms.length}</Badge>
+                  </div>
+                  <ul className="space-y-2">
+                    {archivedJoinedRooms.slice(0, 4).map((room) => (
+                      <li
+                        key={room._id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-cyan-500/15 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{room.name}</p>
+                          <p className="text-xs text-muted-foreground">Archived room</p>
+                        </div>
+                        <Link
+                          href={`/dashboard/rooms/${room._id}`}
+                          className="text-xs font-medium text-cyan-700 hover:text-cyan-600 dark:text-cyan-300"
+                        >
+                          Open
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </section>
 
             <form
@@ -945,7 +1115,7 @@ export default function Page() {
               onSubmit={(event) => {
                 void submitQuickTask(event)
               }}
-              className="mb-5 flex flex-col gap-2 rounded-2xl border border-cyan-500/20 bg-background/75 p-3 backdrop-blur sm:flex-row sm:items-center"
+              className="mb-6 flex flex-col gap-2 rounded-2xl border border-cyan-500/20 bg-background/75 p-3 backdrop-blur sm:flex-row sm:items-center"
             >
               <div
                 className="flex items-center text-cyan-700 dark:text-cyan-300"
@@ -994,22 +1164,53 @@ export default function Page() {
               </div>
             ) : null}
 
-            <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="mb-10 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {metrics.map((metric) => (
                 <div
                   key={metric.label}
-                  className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3.5 backdrop-blur"
+                  className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4 backdrop-blur"
                 >
                   <p className="text-xs font-semibold tracking-wide text-cyan-900/60 dark:text-cyan-100/70">
                     {metric.label}
                   </p>
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <span className="text-2xl font-semibold">{metric.value}</span>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-4xl font-bold tracking-tight">{metric.value}</span>
                     <div className="text-cyan-700 dark:text-cyan-300">
                       <Sparkline points={metric.points} />
                     </div>
                   </div>
-                  <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  <div
+                    className={cn(
+                      "mt-3 inline-flex items-center gap-1 text-xs font-medium",
+                      deltaTone(
+                        metric.label === "FOCUSED TIME"
+                          ? analytics.focusMinutes7d
+                          : metric.label === "TEAM VELOCITY"
+                            ? analytics.velocityPercent
+                            : analytics.activeCollaboratorsNow,
+                        metric.label === "FOCUSED TIME"
+                          ? analytics.focusMinutesPrev7d
+                          : metric.label === "TEAM VELOCITY"
+                            ? analytics.velocityPrevPercent
+                            : analytics.activeCollaboratorsPrev24h
+                      ) === "negative"
+                        ? "text-rose-700 dark:text-rose-300"
+                        : deltaTone(
+                              metric.label === "FOCUSED TIME"
+                                ? analytics.focusMinutes7d
+                                : metric.label === "TEAM VELOCITY"
+                                  ? analytics.velocityPercent
+                                  : analytics.activeCollaboratorsNow,
+                              metric.label === "FOCUSED TIME"
+                                ? analytics.focusMinutesPrev7d
+                                : metric.label === "TEAM VELOCITY"
+                                  ? analytics.velocityPrevPercent
+                                  : analytics.activeCollaboratorsPrev24h
+                            ) === "neutral"
+                          ? "text-muted-foreground"
+                          : "text-emerald-700 dark:text-emerald-300"
+                    )}
+                  >
                     <ArrowUpRight className="size-3.5" />
                     {metric.trend}
                   </div>
@@ -1024,11 +1225,12 @@ export default function Page() {
                 sessionToken={sessionToken}
                 onTasks={handleRoomTasks}
                 onPresence={handleRoomPresence}
+                onMembers={handleRoomMembers}
               />
             ))}
 
-            <div className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="mb-10 rounded-2xl border border-cyan-500/20 bg-background/70 p-5 backdrop-blur">
+              <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Target className="size-4 text-cyan-700 dark:text-cyan-300" />
                   <h2 className="text-base font-semibold">Daily Focus Goal</h2>
@@ -1037,31 +1239,28 @@ export default function Page() {
                   {focusedHours.toFixed(1)}h / {focusGoalHours}h
                 </Badge>
               </div>
-              <div className="relative h-1.5 rounded-full bg-cyan-500/10">
-                <div
-                  className="relative h-full rounded-full bg-linear-to-r from-cyan-500 to-teal-400 transition-all"
-                  style={{ width: `${focusPercent}%` }}
-                >
-                  <span className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 rounded-full border border-cyan-500/30 bg-background px-1.5 py-0 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">
-                    {focusPercent}%
-                  </span>
+              <div className="flex items-center gap-3">
+                <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-cyan-500/10 ring-1 ring-cyan-500/15">
+                  <div
+                    className="absolute inset-y-0 left-0 min-w-1 rounded-full bg-linear-to-r from-cyan-500 to-teal-400 transition-all"
+                    style={{ width: `${focusPercent}%` }}
+                  />
                 </div>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {focusPercent}% complete. Keep the streak alive.
-              </p>
-              <div className="mt-3">
                 <Button
                   type="button"
                   size="sm"
                   onClick={() => {
                     window.location.href = "/dashboard/focus"
                   }}
-                  className="bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                  className="shrink-0 bg-cyan-500 text-slate-950 hover:bg-cyan-400"
                 >
-                  Start Focus Session
+                  <Play className="size-4" />
+                  Start Focus
                 </Button>
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {focusPercent}% complete. Keep the streak alive.
+              </p>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
