@@ -125,6 +125,7 @@ type RoomTask = {
   effort?: TaskEffort
   status: TaskStatus
   dueAt?: number
+  updatedAt?: number
 }
 
 type TaskThreadData = {
@@ -297,6 +298,13 @@ function renderMessageBody(body: string, mentionHandles: Set<string>) {
   })
 }
 
+function isStaleBlockedTask(task: RoomTask) {
+  return (
+    task.status === "blocked" &&
+    Boolean(task.updatedAt && Date.now() - task.updatedAt > 24 * 60 * 60 * 1000)
+  )
+}
+
 function cardStatusClass(status: TaskStatus) {
   if (status === "completed") return "bg-emerald-500/12"
   if (status === "blocked") return "bg-rose-500/12"
@@ -418,6 +426,8 @@ function sortTasks(tasks: RoomTask[], mode: SortMode) {
 function BaseTaskCard({
   task,
   assigneeAvatarKey,
+  unreadCount = 0,
+  latestReply,
   onEdit,
   onStartFocus,
   onDiscuss,
@@ -426,6 +436,8 @@ function BaseTaskCard({
 }: {
   task: RoomTask
   assigneeAvatarKey?: string
+  unreadCount?: number
+  latestReply?: { authorName?: string; body?: string } | null
   onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
@@ -433,13 +445,15 @@ function BaseTaskCard({
   isDraggable?: boolean
 }) {
   const hasActions = Boolean(onStartFocus || onDiscuss || onEdit)
+  const isStaleBlocked = isStaleBlockedTask(task)
 
   return (
     <article
       className={cn(
         "rounded-xl border border-[color:var(--nook-sidebar-border)] bg-background/80 p-3.5",
         isDraggable && "cursor-grab active:cursor-grabbing",
-        cardStatusClass(task.status)
+        cardStatusClass(task.status),
+        isStaleBlocked && "border-rose-500/35 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
       )}
       {...(isDraggable ? dragBindings : undefined)}
     >
@@ -455,6 +469,11 @@ function BaseTaskCard({
           </h4>
         </div>
         <div className="flex items-center gap-1">
+          {unreadCount > 0 ? (
+            <Badge className="bg-cyan-500/15 text-cyan-800 dark:text-cyan-200">
+              {unreadCount} new
+            </Badge>
+          ) : null}
           {task.priority === "high" ? (
             <Badge className={cn("capitalize", priorityClass(task.priority))}>
               {task.priority}
@@ -513,6 +532,19 @@ function BaseTaskCard({
       <p className={cn("mt-1 text-xs", dueStateClass(task.dueAt))}>
         {formatDueLabel(task.dueAt)}
       </p>
+      {isStaleBlocked ? (
+        <p className="mt-1 text-[11px] font-medium text-rose-700 dark:text-rose-300">
+          Blocked for more than 24h
+        </p>
+      ) : null}
+      {latestReply?.body ? (
+        <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">
+            {latestReply.authorName === "You" ? "You" : latestReply.authorName}:
+          </span>{" "}
+          {latestReply.body}
+        </p>
+      ) : null}
       {task.effort && task.effort !== "quick" ? (
         <p className="mt-1 text-[11px] text-muted-foreground">Effort: {effortLabel(task.effort)}</p>
       ) : null}
@@ -549,6 +581,8 @@ function BaseTaskCard({
 function SortableTaskCard(props: {
   task: RoomTask
   assigneeAvatarKey?: string
+  unreadCount?: number
+  latestReply?: { authorName?: string; body?: string } | null
   onEdit?: (task: RoomTask) => void
   onStartFocus?: (task: RoomTaskFocusTarget) => void
   onDiscuss?: (task: RoomTask) => void
@@ -604,11 +638,15 @@ export function RoomTaskBoard({
   onStartFocusTask,
   initialDueFilter = "all",
   initialStatusFilter = "all",
+  initialThreadTaskId = null,
+  initialThreadTab = "chat",
 }: {
   roomId: Id<"rooms">
   onStartFocusTask?: (task: RoomTaskFocusTarget) => void
   initialDueFilter?: DueFilter
   initialStatusFilter?: StatusFilter
+  initialThreadTaskId?: string | null
+  initialThreadTab?: "chat" | "files" | "history"
 }) {
   const { sessionToken, user } = useAuth()
   const docs = useQuery(roomTasksApi.listByRoom, { roomId }) as
@@ -622,6 +660,7 @@ export function RoomTaskBoard({
         effort?: TaskEffort
         status: TaskStatus
         dueAt?: number
+        updatedAt: number
       }>
     | undefined
   const membersQuery = useQuery(
@@ -647,6 +686,7 @@ export function RoomTaskBoard({
 
   const syncByRoom = useMutation(roomTasksApi.syncByRoom)
   const sendThreadMessage = useMutation(roomTaskChatApi.sendMessage)
+  const markThreadRead = useMutation(roomTaskChatApi.markThreadRead)
   const shareThreadFile = useMutation(roomTaskChatApi.shareFile)
   const generateThreadUploadUrl = useMutation(roomTaskChatApi.generateUploadUrl)
   const shareUploadedThreadFile = useMutation(roomTaskChatApi.shareUploadedFile)
@@ -663,6 +703,7 @@ export function RoomTaskBoard({
       effort: task.effort,
       status: task.status,
       dueAt: task.dueAt,
+      updatedAt: task.updatedAt,
     }))
   }, [docs])
 
@@ -695,7 +736,7 @@ export function RoomTaskBoard({
   const [showEditSpecificDue, setShowEditSpecificDue] = React.useState(false)
   const [editDueAt, setEditDueAt] = React.useState("")
   const [threadTaskId, setThreadTaskId] = React.useState<string | null>(null)
-  const [threadTab, setThreadTab] = React.useState<"chat" | "files" | "history">("chat")
+  const [threadTab, setThreadTab] = React.useState<"chat" | "files" | "history">(initialThreadTab)
   const [threadMessage, setThreadMessage] = React.useState("")
   const [threadMessageCaret, setThreadMessageCaret] = React.useState(0)
   const [threadFileUrl, setThreadFileUrl] = React.useState("")
@@ -724,6 +765,49 @@ export function RoomTaskBoard({
       ? { sessionToken, roomId, taskId: threadTaskId }
       : "skip"
   ) as TaskThreadData | undefined
+  const threadSummaries = useQuery(
+    roomTaskChatApi.listTaskThreadSummaries,
+    sessionToken ? { sessionToken, roomId } : "skip"
+  ) as
+    | Array<{
+        taskId: string
+        latestMessageAt?: number
+        latestAuthorUserId?: string
+        latestAuthorName?: string
+        latestBody?: string
+        messageCount: number
+        unreadCount: number
+      }>
+    | undefined
+  const markedThreadReadsRef = React.useRef<Record<string, number>>({})
+
+  const threadSummaryByTaskId = React.useMemo(
+    () => new Map((threadSummaries ?? []).map((summary) => [summary.taskId, summary])),
+    [threadSummaries]
+  )
+
+  React.useEffect(() => {
+    if (!initialThreadTaskId) return
+    setThreadTaskId(initialThreadTaskId)
+    setThreadTab(initialThreadTab)
+    setShowFileLinkInput(false)
+    setThreadError(null)
+  }, [initialThreadTab, initialThreadTaskId])
+
+  React.useEffect(() => {
+    if (!threadTaskId) return
+    const summary = threadSummaryByTaskId.get(threadTaskId)
+    if (!summary?.latestMessageAt) return
+    if ((summary.unreadCount ?? 0) <= 0) return
+    if (markedThreadReadsRef.current[threadTaskId] === summary.latestMessageAt) return
+    markedThreadReadsRef.current[threadTaskId] = summary.latestMessageAt
+    void markThreadRead({
+      sessionToken: sessionToken as string,
+      roomId,
+      taskId: threadTaskId,
+      readAt: summary.latestMessageAt,
+    })
+  }, [markThreadRead, roomId, sessionToken, threadSummaryByTaskId, threadTaskId])
 
   const roomMentionMembers = React.useMemo(
     () =>
@@ -1540,6 +1624,19 @@ export function RoomTaskBoard({
                               ? memberAvatarById.get(task.assigneeUserId)
                               : undefined
                           }
+                          unreadCount={threadSummaryByTaskId.get(task.id)?.unreadCount ?? 0}
+                          latestReply={
+                            threadSummaryByTaskId.get(task.id)?.latestBody
+                              ? {
+                                  authorName:
+                                    threadSummaryByTaskId.get(task.id)?.latestAuthorUserId ===
+                                    user?.id
+                                      ? "You"
+                                      : threadSummaryByTaskId.get(task.id)?.latestAuthorName,
+                                  body: threadSummaryByTaskId.get(task.id)?.latestBody,
+                                }
+                              : null
+                          }
                           onEdit={canEditTasks ? openEdit : undefined}
                           onStartFocus={onStartFocusTask}
                           onDiscuss={(selectedTask) => {
@@ -1620,6 +1717,19 @@ export function RoomTaskBoard({
                               task.assigneeUserId
                                 ? memberAvatarById.get(task.assigneeUserId)
                                 : undefined
+                            }
+                            unreadCount={threadSummaryByTaskId.get(task.id)?.unreadCount ?? 0}
+                            latestReply={
+                              threadSummaryByTaskId.get(task.id)?.latestBody
+                                ? {
+                                    authorName:
+                                      threadSummaryByTaskId.get(task.id)?.latestAuthorUserId ===
+                                      user?.id
+                                        ? "You"
+                                        : threadSummaryByTaskId.get(task.id)?.latestAuthorName,
+                                    body: threadSummaryByTaskId.get(task.id)?.latestBody,
+                                  }
+                                : null
                             }
                             onEdit={canEditTasks ? openEdit : undefined}
                             onStartFocus={onStartFocusTask}

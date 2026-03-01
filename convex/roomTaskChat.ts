@@ -219,6 +219,142 @@ export const listThread = query({
   },
 })
 
+export const listTaskThreadSummaries = query({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
+
+    const tasks = await ctx.db
+      .query("roomTasks")
+      .withIndex("by_room_order", (indexQuery) => indexQuery.eq("roomId", args.roomId))
+      .collect()
+    const messages = await ctx.db
+      .query("roomTaskMessages")
+      .withIndex("by_room_task_createdAt", (indexQuery) => indexQuery.eq("roomId", args.roomId))
+      .collect()
+    const reads = await ctx.db
+      .query("roomTaskThreadReads")
+      .withIndex("by_room_user", (indexQuery) =>
+        indexQuery.eq("roomId", args.roomId).eq("userId", user._id)
+      )
+      .collect()
+
+    const latestByTaskId = new Map<
+      string,
+      {
+        latestMessageAt: number
+        latestAuthorUserId: string
+        latestBody: string
+        messageCount: number
+        unreadCount: number
+      }
+    >()
+    const readByTaskId = new Map(reads.map((read) => [read.taskId, read.lastReadAt]))
+    const latestAuthorIds = new Set<string>()
+
+    for (const task of tasks) {
+      latestByTaskId.set(task.taskId, {
+        latestMessageAt: 0,
+        latestAuthorUserId: "",
+        latestBody: "",
+        messageCount: 0,
+        unreadCount: 0,
+      })
+    }
+
+    for (const message of messages) {
+      latestAuthorIds.add(message.authorUserId)
+      const existing = latestByTaskId.get(message.taskId) ?? {
+        latestMessageAt: 0,
+        latestAuthorUserId: "",
+        latestBody: "",
+        messageCount: 0,
+        unreadCount: 0,
+      }
+      const lastReadAt = readByTaskId.get(message.taskId) ?? 0
+      const isUnreadForViewer =
+        message.createdAt > lastReadAt && message.authorUserId !== (user._id as string)
+      latestByTaskId.set(message.taskId, {
+        latestMessageAt: Math.max(existing.latestMessageAt, message.createdAt),
+        latestAuthorUserId:
+          message.createdAt >= existing.latestMessageAt
+            ? message.authorUserId
+            : existing.latestAuthorUserId,
+        latestBody:
+          message.createdAt >= existing.latestMessageAt
+            ? message.body
+            : existing.latestBody,
+        messageCount: existing.messageCount + 1,
+        unreadCount: existing.unreadCount + (isUnreadForViewer ? 1 : 0),
+      })
+    }
+
+    const authorNameById = new Map<string, string>()
+    await Promise.all(
+      Array.from(latestAuthorIds).map(async (authorUserId) => {
+        const normalized = ctx.db.normalizeId("users", authorUserId)
+        const author = normalized ? await ctx.db.get(normalized) : null
+        authorNameById.set(authorUserId, author?.name ?? "Teammate")
+      })
+    )
+
+    return Array.from(latestByTaskId.entries()).map(([taskId, summary]) => ({
+      taskId,
+      latestMessageAt: summary.latestMessageAt || undefined,
+      latestAuthorUserId: summary.latestAuthorUserId || undefined,
+      latestAuthorName: summary.latestAuthorUserId
+        ? authorNameById.get(summary.latestAuthorUserId) ?? "Teammate"
+        : undefined,
+      latestBody: summary.latestBody || undefined,
+      messageCount: summary.messageCount,
+      unreadCount: summary.unreadCount,
+    }))
+  },
+})
+
+export const markThreadRead = mutation({
+  args: {
+    sessionToken: v.string(),
+    roomId: v.id("rooms"),
+    taskId: v.string(),
+    readAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUserBySession(ctx, args.sessionToken)
+    await requireActiveRoomMembership(ctx, args.roomId, user._id as string)
+    await requireTaskInRoom(ctx, args.roomId, args.taskId)
+
+    const existing = await ctx.db
+      .query("roomTaskThreadReads")
+      .withIndex("by_room_user_task", (indexQuery) =>
+        indexQuery
+          .eq("roomId", args.roomId)
+          .eq("userId", user._id)
+          .eq("taskId", args.taskId)
+      )
+      .first()
+
+    if (existing) {
+      if (args.readAt > existing.lastReadAt) {
+        await ctx.db.patch(existing._id, { lastReadAt: args.readAt })
+      }
+      return { updated: true }
+    }
+
+    await ctx.db.insert("roomTaskThreadReads", {
+      roomId: args.roomId,
+      taskId: args.taskId,
+      userId: user._id,
+      lastReadAt: args.readAt,
+    })
+    return { updated: true }
+  },
+})
+
 export const sendMessage = mutation({
   args: {
     sessionToken: v.string(),

@@ -77,11 +77,13 @@ type AssignedRoomTask = {
   priority: "low" | "medium" | "high"
   status: "todo" | "working" | "blocked" | "completed"
   dueAt?: number
+  roomId: Id<"rooms">
   roomName: string
 }
 
 type RoomTaskMetricDoc = {
   taskId: string
+  title: string
   status: "todo" | "working" | "blocked" | "completed"
   dueAt?: number
   createdAt: number
@@ -724,6 +726,35 @@ export default function Page() {
     ],
     [analytics]
   )
+  const standupSnapshot = React.useMemo(() => {
+    const now = nowTimestamp
+    const todayStart = startOfDay(now)
+    const yesterdayStart = todayStart - 24 * 60 * 60 * 1000
+    const allRoomTasks = Object.values(roomTasksByRoom).flat()
+
+    const doneYesterday = allRoomTasks
+      .filter(
+        (task) =>
+          Boolean(task.completedAt) &&
+          (task.completedAt as number) >= yesterdayStart &&
+          (task.completedAt as number) < todayStart
+      )
+      .slice(0, 4)
+    const doingToday = allRoomTasks
+      .filter(
+        (task) =>
+          task.status === "working" ||
+          (task.updatedAt >= todayStart && task.status !== "completed")
+      )
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, 4)
+    const blocked = allRoomTasks
+      .filter((task) => task.status === "blocked")
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, 4)
+
+    return { doneYesterday, doingToday, blocked }
+  }, [nowTimestamp, roomTasksByRoom])
   const rankedAssignedTasks = React.useMemo(() => {
     const scoreTask = (task: AssignedRoomTask) => {
       let score = 0
@@ -918,6 +949,15 @@ export default function Page() {
     } catch {
       toast.error("Unable to copy code.")
     }
+  }
+
+  function startFocusFromPlan(task: AssignedRoomTask) {
+    const query = new URLSearchParams({
+      roomId: task.roomId,
+      taskId: task.taskId,
+      intention: task.title,
+    })
+    router.push(`/dashboard/focus?${query.toString()}`)
   }
 
   return (
@@ -1283,6 +1323,68 @@ export default function Page() {
               </div>
             </div>
 
+            <section className="mb-10 rounded-2xl border border-cyan-500/20 bg-background/70 p-5 backdrop-blur">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Standup Snapshot</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Quick team read on what moved, what is active, and what needs unblock help.
+                  </p>
+                </div>
+                <Badge variant="secondary">Auto</Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+                    Done Yesterday
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {standupSnapshot.doneYesterday.length === 0 ? (
+                      <li className="text-xs text-muted-foreground">No completed tasks yesterday.</li>
+                    ) : (
+                      standupSnapshot.doneYesterday.map((task) => (
+                        <li key={`standup-done-${task.taskId}`} className="text-sm">
+                          {task.title}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </section>
+                <section className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-300">
+                    Doing Today
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {standupSnapshot.doingToday.length === 0 ? (
+                      <li className="text-xs text-muted-foreground">No active tasks today.</li>
+                    ) : (
+                      standupSnapshot.doingToday.map((task) => (
+                        <li key={`standup-doing-${task.taskId}`} className="text-sm">
+                          {task.title}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </section>
+                <section className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700 dark:text-rose-300">
+                    Blocked
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {standupSnapshot.blocked.length === 0 ? (
+                      <li className="text-xs text-muted-foreground">No blockers right now.</li>
+                    ) : (
+                      standupSnapshot.blocked.map((task) => (
+                        <li key={`standup-blocked-${task.taskId}`} className="text-sm">
+                          {task.title}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                </section>
+              </div>
+            </section>
+
             <section
               id="today-plan"
               className="mb-8 rounded-2xl border border-cyan-500/20 bg-background/70 p-4 backdrop-blur"
@@ -1331,6 +1433,18 @@ export default function Page() {
                           {index + 1}. {task.title}
                         </p>
                         <div className="flex items-center gap-1">
+                          {!todayPlanEditMode ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 border-cyan-500/25 px-2 text-[11px]"
+                              onClick={() => startFocusFromPlan(task)}
+                            >
+                              <Timer className="size-3.5" />
+                              Focus
+                            </Button>
+                          ) : null}
                           {todayPlanEditMode ? (
                             <>
                               <Button
