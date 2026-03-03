@@ -45,6 +45,13 @@ function startOfTomorrow() {
   return startOfToday() + 24 * 60 * 60 * 1000
 }
 
+function sanitizeText(value: string | undefined | null) {
+  if (!value) return ""
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+}
+
 export const get = query({
   args: {
     sessionToken: v.string(),
@@ -101,7 +108,9 @@ export const get = query({
       .filter((pin) => activeRoomIds.has(String(pin.roomId)))
       .map((pin) => pin.roomId)
 
-    const roomNameById = new Map(roomDocs.map((room) => [String(room._id), room.name]))
+    const roomNameById = new Map(
+      roomDocs.map((room) => [String(room._id), sanitizeText(room.name)])
+    )
 
     const todayFocusMinutes = focusSessions
       .filter((session) => session.createdAt >= today)
@@ -120,7 +129,7 @@ export const get = query({
       .slice(0, 6)
       .map((task) => ({
         taskId: task.taskId,
-        title: task.title,
+        title: sanitizeText(task.title),
         priority: task.priority,
         status: task.status,
         dueAt: task.dueAt,
@@ -132,9 +141,9 @@ export const get = query({
       .filter((task) => task.status !== "completed" && task.dueDate)
       .map((task) => ({
         taskId: task.taskId,
-        title: task.title,
-        dueDate: task.dueDate,
-        dueTime: task.dueTime,
+        title: sanitizeText(task.title),
+        dueDate: sanitizeText(task.dueDate),
+        dueTime: sanitizeText(task.dueTime),
         dueAt: new Date(`${task.dueDate}T${task.dueTime || "09:00"}`).getTime(),
       }))
       .filter((task) => !Number.isNaN(task.dueAt) && task.dueAt >= today && task.dueAt < inTwoDays)
@@ -148,7 +157,7 @@ export const get = query({
     return {
       rooms: roomDocs.map((room) => ({
         _id: room._id,
-        name: room.name,
+        name: sanitizeText(room.name),
         icon: room.icon,
         archivedAt: room.archivedAt,
         membersCount: room.membersCount,
@@ -160,11 +169,13 @@ export const get = query({
       activeMembersPreview: activeRooms.slice(0, 6).map((room, index) => ({
         key: room._id,
         initials: room.name
+          ? sanitizeText(room.name)
           .split(" ")
           .map((part) => part[0] ?? "")
           .join("")
           .slice(0, 2)
-          .toUpperCase(),
+          .toUpperCase()
+          : "RM",
         color:
           index % 3 === 0
             ? "bg-emerald-500"
@@ -177,8 +188,8 @@ export const get = query({
         unreadCount: notifications.filter((item) => !item.readAt).length,
         items: notifications.map((doc) => ({
           id: doc._id,
-          title: doc.title,
-          message: doc.message,
+          title: sanitizeText(doc.title),
+          message: sanitizeText(doc.message),
           roomId: doc.roomId,
           taskId: doc.taskId,
           readAt: doc.readAt ?? null,
