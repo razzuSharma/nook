@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
+import type * as dashboard from "../dashboard.js";
 import type * as email from "../email.js";
 import type * as focusSessions from "../focusSessions.js";
 import type * as notifications from "../notifications.js";
@@ -18,6 +19,7 @@ import type * as roomInvites from "../roomInvites.js";
 import type * as roomTaskChat from "../roomTaskChat.js";
 import type * as roomTasks from "../roomTasks.js";
 import type * as rooms from "../rooms.js";
+import type * as sidebar from "../sidebar.js";
 import type * as tasks from "../tasks.js";
 
 import type {
@@ -29,6 +31,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   crons: typeof crons;
+  dashboard: typeof dashboard;
   email: typeof email;
   focusSessions: typeof focusSessions;
   notifications: typeof notifications;
@@ -37,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   roomTaskChat: typeof roomTaskChat;
   roomTasks: typeof roomTasks;
   rooms: typeof rooms;
+  sidebar: typeof sidebar;
   tasks: typeof tasks;
 }>;
 

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import {
   closestCorners,
   DndContext,
@@ -26,17 +27,14 @@ import { useMutation, useQuery } from "convex/react"
 import {
   AlertTriangle,
   Crosshair,
-  Paperclip,
   GripVertical,
   Info,
-  Link2,
   MessageSquare,
   MoreHorizontal,
   PauseCircle,
   Pencil,
   Plus,
   Search,
-  Send,
   SlidersHorizontal,
   Trash2,
   UserRound,
@@ -90,7 +88,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Tooltip,
   TooltipContent,
@@ -100,6 +98,19 @@ import {
 import { avatarSrcForKey } from "@/lib/avatar-options"
 import { buildMentionHandle, normalizeMentionHandle } from "@/lib/mention-utils"
 import { cn } from "@/lib/utils"
+
+const ThreadSheetPanels = dynamic(
+  () => import("@/components/rooms/thread-sheet-panels").then((mod) => mod.ThreadSheetPanels),
+  {
+    loading: () => (
+      <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+        <div className="min-h-0 flex-1 rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3 text-xs text-muted-foreground">
+          Loading panel...
+        </div>
+      </div>
+    ),
+  }
+)
 
 type TaskStatus = "todo" | "working" | "blocked" | "completed"
 type TaskPriority = "low" | "medium" | "high"
@@ -182,6 +193,11 @@ const boardColumns: Array<{
 
 const statusOrder: TaskStatus[] = ["todo", "working", "blocked", "completed"]
 const IN_PROGRESS_WIP_LIMIT = 3
+const taskCardVirtualizationStyle = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "156px",
+} as React.CSSProperties
+
 const duePresetOptions: Array<{ value: Exclude<DuePreset, "custom" | "none">; label: string }> = [
   { value: "today", label: "Today" },
   { value: "tomorrow", label: "Tomorrow" },
@@ -224,12 +240,18 @@ function computeDueAtFromPreset(preset: DuePreset, customValue: string) {
 }
 
 function toBoardState(tasks: RoomTask[]): TaskBoardState {
-  return {
-    todo: tasks.filter((task) => task.status === "todo"),
-    working: tasks.filter((task) => task.status === "working"),
-    blocked: tasks.filter((task) => task.status === "blocked"),
-    completed: tasks.filter((task) => task.status === "completed"),
+  const next: TaskBoardState = {
+    todo: [],
+    working: [],
+    blocked: [],
+    completed: [],
   }
+
+  for (const task of tasks) {
+    next[task.status].push(task)
+  }
+
+  return next
 }
 
 function flattenBoard(board: TaskBoardState): RoomTask[] {
@@ -423,6 +445,18 @@ function sortTasks(tasks: RoomTask[], mode: SortMode) {
   })
 }
 
+type TaskCardProps = {
+  task: RoomTask
+  assigneeAvatarKey?: string
+  unreadCount?: number
+  latestReply?: { authorName?: string; body?: string } | null
+  onEdit?: (task: RoomTask) => void
+  onStartFocus?: (task: RoomTaskFocusTarget) => void
+  onDiscuss?: (task: RoomTask) => void
+  dragBindings?: React.HTMLAttributes<HTMLElement>
+  isDraggable?: boolean
+}
+
 function BaseTaskCard({
   task,
   assigneeAvatarKey,
@@ -433,17 +467,7 @@ function BaseTaskCard({
   onDiscuss,
   dragBindings,
   isDraggable = false,
-}: {
-  task: RoomTask
-  assigneeAvatarKey?: string
-  unreadCount?: number
-  latestReply?: { authorName?: string; body?: string } | null
-  onEdit?: (task: RoomTask) => void
-  onStartFocus?: (task: RoomTaskFocusTarget) => void
-  onDiscuss?: (task: RoomTask) => void
-  dragBindings?: React.HTMLAttributes<HTMLElement>
-  isDraggable?: boolean
-}) {
+}: TaskCardProps) {
   const hasActions = Boolean(onStartFocus || onDiscuss || onEdit)
   const isStaleBlocked = isStaleBlockedTask(task)
 
@@ -578,6 +602,22 @@ function BaseTaskCard({
   )
 }
 
+function taskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps) {
+  return (
+    prev.task === next.task &&
+    prev.assigneeAvatarKey === next.assigneeAvatarKey &&
+    prev.unreadCount === next.unreadCount &&
+    prev.latestReply?.authorName === next.latestReply?.authorName &&
+    prev.latestReply?.body === next.latestReply?.body &&
+    prev.onEdit === next.onEdit &&
+    prev.onStartFocus === next.onStartFocus &&
+    prev.onDiscuss === next.onDiscuss &&
+    prev.isDraggable === next.isDraggable
+  )
+}
+
+const MemoTaskCard = React.memo(BaseTaskCard, taskCardPropsEqual)
+
 function SortableTaskCard(props: {
   task: RoomTask
   assigneeAvatarKey?: string
@@ -596,16 +636,255 @@ function SortableTaskCard(props: {
     <div
       ref={setNodeRef}
       style={{
+        ...taskCardVirtualizationStyle,
         transform: CSS.Transform.toString(transform),
         transition,
       }}
     >
-      <BaseTaskCard
+      <MemoTaskCard
         {...props}
         isDraggable
         dragBindings={{ ...attributes, ...listeners }}
       />
     </div>
+  )
+}
+
+type TaskThreadMeta = {
+  unreadCount: number
+  latestReply: { authorName?: string; body?: string } | null
+}
+
+type TaskColumnCardProps = {
+  task: RoomTask
+  memberAvatarById: Map<string, string>
+  taskThreadMetaById: Map<string, TaskThreadMeta>
+  canEditTasks: boolean
+  onEdit: (task: RoomTask) => void
+  onStartFocus?: (task: RoomTaskFocusTarget) => void
+  onDiscuss: (task: RoomTask) => void
+}
+
+function TaskColumnCard({
+  task,
+  memberAvatarById,
+  taskThreadMetaById,
+  canEditTasks,
+  onEdit,
+  onStartFocus,
+  onDiscuss,
+}: TaskColumnCardProps) {
+  const threadMeta = taskThreadMetaById.get(task.id)
+
+  return (
+    <div style={taskCardVirtualizationStyle}>
+      <MemoTaskCard
+        key={task.id}
+        task={task}
+        assigneeAvatarKey={
+          task.assigneeUserId ? memberAvatarById.get(task.assigneeUserId) : undefined
+        }
+        unreadCount={threadMeta?.unreadCount ?? 0}
+        latestReply={threadMeta?.latestReply ?? null}
+        onEdit={canEditTasks ? onEdit : undefined}
+        onStartFocus={onStartFocus}
+        onDiscuss={onDiscuss}
+      />
+    </div>
+  )
+}
+
+function SortableColumnTaskCard({
+  task,
+  memberAvatarById,
+  taskThreadMetaById,
+  canEditTasks,
+  onEdit,
+  onStartFocus,
+  onDiscuss,
+}: TaskColumnCardProps) {
+  const threadMeta = taskThreadMetaById.get(task.id)
+
+  return (
+    <SortableTaskCard
+      key={task.id}
+      task={task}
+      assigneeAvatarKey={
+        task.assigneeUserId ? memberAvatarById.get(task.assigneeUserId) : undefined
+      }
+      unreadCount={threadMeta?.unreadCount ?? 0}
+      latestReply={threadMeta?.latestReply ?? null}
+      onEdit={canEditTasks ? onEdit : undefined}
+      onStartFocus={onStartFocus}
+      onDiscuss={onDiscuss}
+    />
+  )
+}
+
+type TaskColumnProps = {
+  column: (typeof boardColumns)[number]
+  items: RoomTask[]
+  boardWorkingCount: number
+  canEditTasks: boolean
+  isDraggable: boolean
+  memberAvatarById: Map<string, string>
+  taskThreadMetaById: Map<string, TaskThreadMeta>
+  onEdit: (task: RoomTask) => void
+  onStartFocus?: (task: RoomTaskFocusTarget) => void
+  onDiscuss: (task: RoomTask) => void
+  onOpenAddTask: (status: TaskStatus) => void
+}
+
+function TaskColumnBody({
+  items,
+  isDraggable,
+  memberAvatarById,
+  taskThreadMetaById,
+  canEditTasks,
+  onEdit,
+  onStartFocus,
+  onDiscuss,
+}: Omit<TaskColumnProps, "column" | "boardWorkingCount" | "onOpenAddTask">) {
+  if (!isDraggable) {
+    return (
+      <div className="space-y-3">
+        {items.map((task) => (
+          <TaskColumnCard
+            key={task.id}
+            task={task}
+            memberAvatarById={memberAvatarById}
+            taskThreadMetaById={taskThreadMetaById}
+            canEditTasks={canEditTasks}
+            onEdit={onEdit}
+            onStartFocus={onStartFocus}
+            onDiscuss={onDiscuss}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <SortableContext items={items.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+      <div className="space-y-3">
+        {items.map((task) => (
+          <SortableColumnTaskCard
+            key={task.id}
+            task={task}
+            memberAvatarById={memberAvatarById}
+            taskThreadMetaById={taskThreadMetaById}
+            canEditTasks={canEditTasks}
+            onEdit={onEdit}
+            onStartFocus={onStartFocus}
+            onDiscuss={onDiscuss}
+          />
+        ))}
+      </div>
+    </SortableContext>
+  )
+}
+
+function TaskColumnHeader({
+  column,
+  itemsCount,
+  boardWorkingCount,
+}: {
+  column: (typeof boardColumns)[number]
+  itemsCount: number
+  boardWorkingCount: number
+}) {
+  const isWipOverLimit = column.id === "working" && boardWorkingCount > IN_PROGRESS_WIP_LIMIT
+
+  return (
+    <div className="mb-3 flex items-start justify-between">
+      <div>
+        <h3
+          className={cn(
+            "text-base font-semibold",
+            itemsCount === 0 && "text-foreground/75"
+          )}
+        >
+          {column.label}
+        </h3>
+        <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
+          {column.subtitle}
+        </p>
+        {isWipOverLimit ? (
+          <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="size-3.5" />
+            WIP limit exceeded ({boardWorkingCount}/{IN_PROGRESS_WIP_LIMIT})
+          </p>
+        ) : null}
+      </div>
+      <Badge variant="secondary">{itemsCount}</Badge>
+    </div>
+  )
+}
+
+function TaskColumn({
+  column,
+  items,
+  boardWorkingCount,
+  canEditTasks,
+  isDraggable,
+  memberAvatarById,
+  taskThreadMetaById,
+  onEdit,
+  onStartFocus,
+  onDiscuss,
+  onOpenAddTask,
+}: TaskColumnProps) {
+  const content = (
+    <>
+      <TaskColumnHeader
+        column={column}
+        itemsCount={items.length}
+        boardWorkingCount={boardWorkingCount}
+      />
+      <TaskColumnBody
+        items={items}
+        isDraggable={isDraggable}
+        memberAvatarById={memberAvatarById}
+        taskThreadMetaById={taskThreadMetaById}
+        canEditTasks={canEditTasks}
+        onEdit={onEdit}
+        onStartFocus={onStartFocus}
+        onDiscuss={onDiscuss}
+      />
+      <Button
+        type="button"
+        variant={items.length === 0 ? "outline" : "ghost"}
+        size="sm"
+        className={cn(
+          "mt-3 w-full justify-start hover:text-foreground",
+          items.length === 0 ? "border-dashed text-muted-foreground" : "text-muted-foreground"
+        )}
+        onClick={() => onOpenAddTask(column.id)}
+        disabled={!canEditTasks}
+      >
+        <Plus className="size-4" />
+        {canEditTasks ? "Add task" : "View only"}
+      </Button>
+    </>
+  )
+
+  if (isDraggable) {
+    return (
+      <ColumnDropZone id={column.id} muted={items.length === 0}>
+        {content}
+      </ColumnDropZone>
+    )
+  }
+
+  return (
+    <section
+      className={cn(
+        "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur",
+        items.length === 0 && "border-dashed bg-transparent/10 opacity-70 shadow-none"
+      )}
+    >
+      {content}
+    </section>
   )
 }
 
@@ -719,6 +998,7 @@ export function RoomTaskBoard({
   const [draftDueAt, setDraftDueAt] = React.useState("")
   const [isAddTaskOpen, setIsAddTaskOpen] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
+  const deferredSearchQuery = React.useDeferredValue(searchQuery)
   const [assigneeFilter, setAssigneeFilter] = React.useState<AssigneeFilter>("all")
   const [priorityFilter, setPriorityFilter] = React.useState<PriorityFilter>("all")
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>(initialStatusFilter)
@@ -902,32 +1182,35 @@ export function RoomTaskBoard({
     [board]
   )
 
+  const taskById = React.useMemo(() => {
+    const next = new Map<string, RoomTask>()
+    for (const task of flattenBoard(board)) {
+      next.set(task.id, task)
+    }
+    return next
+  }, [board])
+
   const activeTask = React.useMemo(() => {
     if (!activeId) return null
-    for (const status of statusOrder) {
-      const task = board[status].find((item) => item.id === activeId)
-      if (task) return task
-    }
-    return null
-  }, [activeId, board])
+    return taskById.get(activeId) ?? null
+  }, [activeId, taskById])
 
   const editingTask = React.useMemo(() => {
     if (!editingTaskId) return null
-    for (const status of statusOrder) {
-      const task = board[status].find((item) => item.id === editingTaskId)
-      if (task) return task
-    }
-    return null
-  }, [editingTaskId, board])
+    return taskById.get(editingTaskId) ?? null
+  }, [editingTaskId, taskById])
 
   const threadTask = React.useMemo(() => {
     if (!threadTaskId) return null
-    for (const status of statusOrder) {
-      const task = board[status].find((item) => item.id === threadTaskId)
-      if (task) return task
-    }
-    return null
-  }, [threadTaskId, board])
+    return taskById.get(threadTaskId) ?? null
+  }, [threadTaskId, taskById])
+
+  const openTaskThread = React.useCallback((selectedTask: RoomTask) => {
+    setThreadTaskId(selectedTask.id)
+    setThreadTab("chat")
+    setShowFileLinkInput(false)
+    setThreadError(null)
+  }, [])
 
   async function postThreadMessage() {
     if (!sessionToken || !threadTaskId) return
@@ -1111,19 +1394,22 @@ export function RoomTaskBoard({
     setIsAddTaskOpen(true)
   }
 
-  function openEdit(task: RoomTask) {
-    if (!canEditTasks) return
-    setEditingTaskId(task.id)
-    setEditTitle(task.title)
-    setEditNote(task.note)
-    setEditAssigneeUserId(task.assigneeUserId ?? "none")
-    setEditPriority(task.priority)
-    setEditEffort(task.effort ?? "quick")
-    setEditStatus(task.status)
-    setEditDuePreset(task.dueAt ? "custom" : "none")
-    setShowEditSpecificDue(Boolean(task.dueAt))
-    setEditDueAt(task.dueAt ? new Date(task.dueAt).toISOString().slice(0, 16) : "")
-  }
+  const openEdit = React.useCallback(
+    (task: RoomTask) => {
+      if (!canEditTasks) return
+      setEditingTaskId(task.id)
+      setEditTitle(task.title)
+      setEditNote(task.note)
+      setEditAssigneeUserId(task.assigneeUserId ?? "none")
+      setEditPriority(task.priority)
+      setEditEffort(task.effort ?? "quick")
+      setEditStatus(task.status)
+      setEditDuePreset(task.dueAt ? "custom" : "none")
+      setShowEditSpecificDue(Boolean(task.dueAt))
+      setEditDueAt(task.dueAt ? new Date(task.dueAt).toISOString().slice(0, 16) : "")
+    },
+    [canEditTasks]
+  )
 
   function saveTaskEdit() {
     if (!canEditTasks) return
@@ -1274,7 +1560,7 @@ export function RoomTaskBoard({
 
   const visibleBoard = React.useMemo(() => {
     const filterOpts = {
-      search: searchQuery,
+      search: deferredSearchQuery,
       assignee: assigneeFilter,
       priority: priorityFilter,
       status: statusFilter,
@@ -1296,7 +1582,32 @@ export function RoomTaskBoard({
         sortMode
       ),
     } as TaskBoardState
-  }, [assigneeFilter, board, dueFilter, priorityFilter, searchQuery, sortMode, statusFilter, user?.id])
+  }, [assigneeFilter, board, deferredSearchQuery, dueFilter, priorityFilter, sortMode, statusFilter, user?.id])
+
+  const taskThreadMetaById = React.useMemo(() => {
+    const next = new Map<
+      string,
+      {
+        unreadCount: number
+        latestReply: { authorName?: string; body?: string } | null
+      }
+    >()
+
+    for (const summary of threadSummaries ?? []) {
+      next.set(summary.taskId, {
+        unreadCount: summary.unreadCount ?? 0,
+        latestReply: summary.latestBody
+          ? {
+              authorName:
+                summary.latestAuthorUserId === user?.id ? "You" : summary.latestAuthorName,
+              body: summary.latestBody,
+            }
+          : null,
+      })
+    }
+
+    return next
+  }, [threadSummaries, user?.id])
 
   function clearFilters() {
     setSearchQuery("")
@@ -1309,7 +1620,6 @@ export function RoomTaskBoard({
   const nowTasks = React.useMemo(() => board.working.slice(0, 4), [board.working])
   const nextTasks = React.useMemo(() => board.todo.slice(0, 4), [board.todo])
   const blockedTasks = React.useMemo(() => board.blocked.slice(0, 4), [board.blocked])
-  const isWipOverLimit = board.working.length > IN_PROGRESS_WIP_LIMIT
 
   return (
     <div className="space-y-5">
@@ -1579,96 +1889,26 @@ export function RoomTaskBoard({
       </Card>
 
       {hasActiveFilters || !canEditTasks ? (
-          <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
-              {boardColumns.map((column) => {
-                const items = visibleBoard[column.id]
-                return (
-                  <section
-                    key={column.id}
-                    className={cn(
-                      "rounded-2xl border border-[color:var(--nook-sidebar-border)] bg-background/55 p-3 backdrop-blur",
-                      items.length === 0 &&
-                        "border-dashed bg-transparent/10 opacity-70 shadow-none"
-                    )}
-                  >
-                    <div className="mb-3 flex items-start justify-between">
-                      <div>
-                        <h3
-                          className={cn(
-                            "text-base font-semibold",
-                            items.length === 0 && "text-foreground/75"
-                          )}
-                        >
-                          {column.label}
-                        </h3>
-                        <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
-                          {column.subtitle}
-                        </p>
-                        {column.id === "working" && isWipOverLimit ? (
-                          <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
-                            <AlertTriangle className="size-3.5" />
-                            WIP limit exceeded ({board.working.length}/{IN_PROGRESS_WIP_LIMIT})
-                          </p>
-                        ) : null}
-                      </div>
-                      <Badge variant="secondary">{items.length}</Badge>
-                    </div>
-                    <div className="space-y-3">
-                      {items.map((task) => (
-                        <BaseTaskCard
-                          key={task.id}
-                          task={task}
-                          assigneeAvatarKey={
-                            task.assigneeUserId
-                              ? memberAvatarById.get(task.assigneeUserId)
-                              : undefined
-                          }
-                          unreadCount={threadSummaryByTaskId.get(task.id)?.unreadCount ?? 0}
-                          latestReply={
-                            threadSummaryByTaskId.get(task.id)?.latestBody
-                              ? {
-                                  authorName:
-                                    threadSummaryByTaskId.get(task.id)?.latestAuthorUserId ===
-                                    user?.id
-                                      ? "You"
-                                      : threadSummaryByTaskId.get(task.id)?.latestAuthorName,
-                                  body: threadSummaryByTaskId.get(task.id)?.latestBody,
-                                }
-                              : null
-                          }
-                          onEdit={canEditTasks ? openEdit : undefined}
-                          onStartFocus={onStartFocusTask}
-                          onDiscuss={(selectedTask) => {
-                            setThreadTaskId(selectedTask.id)
-                            setThreadTab("chat")
-                            setShowFileLinkInput(false)
-                            setThreadError(null)
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <Button
-                      type="button"
-                      variant={items.length === 0 ? "outline" : "ghost"}
-                      size="sm"
-                      className={cn(
-                        "mt-3 w-full justify-start hover:text-foreground",
-                        items.length === 0
-                          ? "border-dashed text-muted-foreground"
-                          : "text-muted-foreground"
-                      )}
-                      onClick={() => openAddTask(column.id)}
-                      disabled={!canEditTasks}
-                    >
-                      <Plus className="size-4" />
-                      {canEditTasks ? "Add task" : "View only"}
-                    </Button>
-                  </section>
-                )
-              })}
-            </div>
+        <div className="overflow-x-auto pb-1">
+          <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
+            {boardColumns.map((column) => (
+              <TaskColumn
+                key={column.id}
+                column={column}
+                items={visibleBoard[column.id]}
+                boardWorkingCount={board.working.length}
+                canEditTasks={canEditTasks}
+                isDraggable={false}
+                memberAvatarById={memberAvatarById}
+                taskThreadMetaById={taskThreadMetaById}
+                onEdit={openEdit}
+                onStartFocus={onStartFocusTask}
+                onDiscuss={openTaskThread}
+                onOpenAddTask={openAddTask}
+              />
+            ))}
           </div>
+        </div>
       ) : (
         <DndContext
           sensors={sensors}
@@ -1678,90 +1918,22 @@ export function RoomTaskBoard({
         >
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[960px] gap-4 lg:grid-cols-4">
-              {boardColumns.map((column) => {
-                const items = board[column.id]
-                return (
-                  <ColumnDropZone key={column.id} id={column.id} muted={items.length === 0}>
-                    <div className="mb-3 flex items-start justify-between">
-                      <div>
-                        <h3
-                          className={cn(
-                            "text-base font-semibold",
-                            items.length === 0 && "text-foreground/75"
-                          )}
-                        >
-                          {column.label}
-                        </h3>
-                        <p className="text-xs font-medium text-foreground/70 dark:text-foreground/75">
-                          {column.subtitle}
-                        </p>
-                        {column.id === "working" && isWipOverLimit ? (
-                          <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300">
-                            <AlertTriangle className="size-3.5" />
-                            WIP limit exceeded ({board.working.length}/{IN_PROGRESS_WIP_LIMIT})
-                          </p>
-                        ) : null}
-                      </div>
-                      <Badge variant="secondary">{items.length}</Badge>
-                    </div>
-                    <SortableContext
-                      items={items.map((task) => task.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      <div className="space-y-3">
-                        {items.map((task) => (
-                          <SortableTaskCard
-                            key={task.id}
-                            task={task}
-                            assigneeAvatarKey={
-                              task.assigneeUserId
-                                ? memberAvatarById.get(task.assigneeUserId)
-                                : undefined
-                            }
-                            unreadCount={threadSummaryByTaskId.get(task.id)?.unreadCount ?? 0}
-                            latestReply={
-                              threadSummaryByTaskId.get(task.id)?.latestBody
-                                ? {
-                                    authorName:
-                                      threadSummaryByTaskId.get(task.id)?.latestAuthorUserId ===
-                                      user?.id
-                                        ? "You"
-                                        : threadSummaryByTaskId.get(task.id)?.latestAuthorName,
-                                    body: threadSummaryByTaskId.get(task.id)?.latestBody,
-                                  }
-                                : null
-                            }
-                            onEdit={canEditTasks ? openEdit : undefined}
-                            onStartFocus={onStartFocusTask}
-                            onDiscuss={(selectedTask) => {
-                              setThreadTaskId(selectedTask.id)
-                              setThreadTab("chat")
-                              setShowFileLinkInput(false)
-                              setThreadError(null)
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </SortableContext>
-                    <Button
-                      type="button"
-                      variant={items.length === 0 ? "outline" : "ghost"}
-                      size="sm"
-                      className={cn(
-                        "mt-3 w-full justify-start hover:text-foreground",
-                        items.length === 0
-                          ? "border-dashed text-muted-foreground"
-                          : "text-muted-foreground"
-                      )}
-                      onClick={() => openAddTask(column.id)}
-                      disabled={!canEditTasks}
-                    >
-                      <Plus className="size-4" />
-                      {canEditTasks ? "Add task" : "View only"}
-                    </Button>
-                  </ColumnDropZone>
-                )
-              })}
+              {boardColumns.map((column) => (
+                <TaskColumn
+                  key={column.id}
+                  column={column}
+                  items={board[column.id]}
+                  boardWorkingCount={board.working.length}
+                  canEditTasks={canEditTasks}
+                  isDraggable
+                  memberAvatarById={memberAvatarById}
+                  taskThreadMetaById={taskThreadMetaById}
+                  onEdit={openEdit}
+                  onStartFocus={onStartFocusTask}
+                  onDiscuss={openTaskThread}
+                  onOpenAddTask={openAddTask}
+                />
+              ))}
             </div>
           </div>
           <DragOverlay>
@@ -2132,313 +2304,36 @@ export function RoomTaskBoard({
                 <TabsTrigger value="history">History</TabsTrigger>
               </TabsList>
             </div>
-
-            <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col px-4 py-3">
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
-                {thread === undefined ? (
-                  <p className="text-xs text-muted-foreground">Loading thread...</p>
-                ) : thread.messages.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No messages yet.</p>
-                ) : (
-                  thread.messages.map((message) => {
-                    const isMe = Boolean(user?.id && message.authorUserId === user.id)
-                    const reactions = messageReactions[message.id] ?? []
-                    return (
-                      <div
-                        key={message.id}
-                        className={cn("flex", isMe ? "justify-end" : "justify-start")}
-                      >
-                        <article
-                          className={cn(
-                            "w-fit max-w-[90%] rounded-md border px-3 py-2 text-sm",
-                            isMe
-                              ? "border-cyan-500/40 bg-cyan-500/15"
-                              : "border-[color:var(--nook-sidebar-border)] bg-background/70"
-                          )}
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-3">
-                            <span className="text-xs font-medium">
-                              {isMe ? "You" : message.authorName}
-                            </span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {new Date(message.createdAt).toLocaleTimeString()}
-                            </span>
-                          </div>
-                          <p className="text-sm">
-                            {renderMessageBody(message.body, roomMentionHandleSet)}
-                          </p>
-                          <div className="mt-2 flex items-center gap-1">
-                            {["👍", "✅", "🔥"].map((emoji) => {
-                              const active = reactions.includes(emoji)
-                              return (
-                                <button
-                                  key={emoji}
-                                  type="button"
-                                  className={cn(
-                                    "rounded-full border px-2 py-0.5 text-xs transition-colors",
-                                    active
-                                      ? "border-cyan-500/40 bg-cyan-500/15"
-                                      : "border-[color:var(--nook-sidebar-border)] bg-background/60"
-                                  )}
-                                  onClick={() =>
-                                    toggleMessageReaction(message.id, emoji)
-                                  }
-                                >
-                                  {emoji}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </article>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-              <form
-                className="mt-3 flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void postThreadMessage()
-                }}
-              >
-                <div className="relative flex-1">
-                  <Input
-                    ref={threadMessageInputRef}
-                    value={threadMessage}
-                    onChange={(event) => {
-                      setThreadMessage(event.target.value)
-                      setThreadMessageCaret(event.target.selectionStart ?? event.target.value.length)
-                    }}
-                    onClick={(event) => {
-                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
-                    }}
-                    onKeyUp={(event) => {
-                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
-                    }}
-                    onSelect={(event) => {
-                      setThreadMessageCaret(event.currentTarget.selectionStart ?? threadMessage.length)
-                    }}
-                    onKeyDown={(event) => {
-                      if (mentionSuggestions.length === 0) return
-
-                      if (event.key === "ArrowDown") {
-                        event.preventDefault()
-                        setActiveMentionIndex((prev) => (prev + 1) % mentionSuggestions.length)
-                        return
-                      }
-                      if (event.key === "ArrowUp") {
-                        event.preventDefault()
-                        setActiveMentionIndex((prev) =>
-                          prev === 0 ? mentionSuggestions.length - 1 : prev - 1
-                        )
-                        return
-                      }
-                      if (event.key === "Enter" || event.key === "Tab") {
-                        event.preventDefault()
-                        applyMention(mentionSuggestions[activeMentionIndex]?.handle ?? "")
-                        return
-                      }
-                      if (event.key === "Escape") {
-                        setActiveMentionIndex(0)
-                      }
-                    }}
-                    placeholder="Write a message about this task... Use @ to mention someone."
-                    className="pr-20"
-                  />
-                  {mentionSuggestions.length > 0 ? (
-                    <div className="absolute inset-x-0 bottom-full z-10 mb-2 rounded-md border border-[color:var(--nook-sidebar-border)] bg-background shadow-lg">
-                      <ul className="max-h-64 overflow-y-auto py-1">
-                        {mentionSuggestions.map((member, index) => (
-                          <li key={member.userId}>
-                            <button
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent",
-                                index === activeMentionIndex && "bg-accent"
-                              )}
-                              onMouseDown={(event) => {
-                                event.preventDefault()
-                                applyMention(member.handle)
-                              }}
-                            >
-                              <Avatar className="size-7">
-                                <AvatarImage
-                                  src={avatarSrcForKey(member.avatarKey)}
-                                  alt={member.name}
-                                />
-                                <AvatarFallback>{member.name.slice(0, 2)}</AvatarFallback>
-                              </Avatar>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate font-medium">{member.name}</span>
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  @{member.handle}
-                                </span>
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                    <button
-                      type="button"
-                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                      onClick={() => setThreadTab("files")}
-                      aria-label="Open attachments"
-                    >
-                      <Paperclip className="size-4" />
-                    </button>
-                  </div>
-                </div>
-                <Button
-                  type="submit"
-                  className="bg-[color:var(--nook-accent)] text-slate-950 hover:bg-[color:var(--nook-accent-strong)]"
-                >
-                  <Send className="size-4" />
-                  Send
-                </Button>
-              </form>
-            </TabsContent>
-
-            <TabsContent value="files" className="flex min-h-0 flex-1 flex-col px-4 py-3">
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
-                {thread === undefined ? (
-                  <p className="text-xs text-muted-foreground">Loading files...</p>
-                ) : thread.files.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No files shared yet.</p>
-                ) : (
-                  thread.files.map((file) => (
-                    <article
-                      key={file.id}
-                      className="rounded-md border border-[color:var(--nook-sidebar-border)] bg-background/70 px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <a
-                          href={file.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-2 text-sm font-medium text-cyan-700 underline dark:text-cyan-300"
-                        >
-                          <Link2 className="size-3.5" />
-                          {file.name}
-                        </a>
-                        <span className="text-[11px] text-muted-foreground">
-                          {new Date(file.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Shared by {file.uploadedByName}
-                      </p>
-                    </article>
-                  ))
-                )}
-              </div>
-
-              <div
-                className="mt-3 rounded-lg border border-dashed border-[color:var(--nook-sidebar-border)] bg-background/40 p-4 text-center"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  if (isUploadingThreadFile || !canManageFiles) return
-                  const file = event.dataTransfer.files?.[0]
-                  if (file) setThreadUploadFile(file)
-                }}
-              >
-                <p className="text-sm font-medium">Drop a file here</p>
-                <p className="mt-1 text-xs text-muted-foreground">or browse from your device</p>
-                <div className="mt-3 flex items-center justify-center gap-2">
-                  <Input
-                    type="file"
-                    disabled={isUploadingThreadFile || !canManageFiles}
-                    onChange={(event) =>
-                      setThreadUploadFile(event.target.files?.[0] ?? null)
-                    }
-                    className="max-w-[240px]"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!threadUploadFile || isUploadingThreadFile || !canManageFiles}
-                    onClick={() => {
-                      void uploadThreadFile()
-                    }}
-                  >
-                    {isUploadingThreadFile ? "Uploading..." : "Upload"}
-                  </Button>
-                </div>
-                <button
-                  type="button"
-                  className="mt-3 text-xs text-cyan-700 underline dark:text-cyan-300"
-                  disabled={!canManageFiles}
-                  onClick={() => setShowFileLinkInput((prev) => !prev)}
-                >
-                  or paste a link
-                </button>
-                {showFileLinkInput ? (
-                  <div className="mt-2 flex gap-2">
-                    <Input
-                      value={threadFileUrl}
-                      disabled={!canManageFiles}
-                      onChange={(event) => setThreadFileUrl(event.target.value)}
-                      placeholder="https://..."
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={!canManageFiles}
-                      onClick={() => {
-                        void postThreadFile()
-                      }}
-                    >
-                      Share
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </TabsContent>
-
-            <TabsContent value="history" className="flex min-h-0 flex-1 flex-col px-4 py-3">
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border border-[color:var(--nook-sidebar-border)] bg-[color:var(--nook-sidebar-input-bg)] p-3">
-                {thread === undefined ? (
-                  <p className="text-xs text-muted-foreground">Loading history...</p>
-                ) : thread.events.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">No history yet.</p>
-                ) : (
-                  thread.events.map((event) => (
-                    <article
-                      key={event.id}
-                      className="rounded-md border border-[color:var(--nook-sidebar-border)] bg-background/70 px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="inline-flex items-center gap-2">
-                          <Avatar className="size-6 border border-cyan-500/25">
-                            <AvatarImage
-                              src={avatarSrcForKey(event.actorAvatarKey)}
-                              alt={event.actorName}
-                            />
-                            <AvatarFallback>
-                              {event.actorName
-                                .split(" ")
-                                .map((part) => part[0] ?? "")
-                                .join("")
-                                .slice(0, 2)
-                                .toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs font-medium">{event.actorName}</span>
-                        </div>
-                        <span className="text-[11px] text-muted-foreground">
-                          {new Date(event.createdAt).toLocaleString()}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{event.message}</p>
-                    </article>
-                  ))
-                )}
-              </div>
-            </TabsContent>
+            <ThreadSheetPanels
+              threadTab={threadTab}
+              thread={thread}
+              userId={user?.id}
+              messageReactions={messageReactions}
+              renderMessageBody={renderMessageBody}
+              roomMentionHandleSet={roomMentionHandleSet}
+              threadMessageInputRef={threadMessageInputRef}
+              threadMessage={threadMessage}
+              setThreadMessage={setThreadMessage}
+              threadMessageCaretFallback={threadMessage.length}
+              setThreadMessageCaret={setThreadMessageCaret}
+              mentionSuggestions={mentionSuggestions}
+              activeMentionIndex={activeMentionIndex}
+              setActiveMentionIndex={setActiveMentionIndex}
+              applyMention={applyMention}
+              setThreadTab={setThreadTab}
+              postThreadMessage={postThreadMessage}
+              canManageFiles={canManageFiles}
+              isUploadingThreadFile={isUploadingThreadFile}
+              setThreadUploadFile={setThreadUploadFile}
+              threadUploadFile={threadUploadFile}
+              uploadThreadFile={uploadThreadFile}
+              showFileLinkInput={showFileLinkInput}
+              setShowFileLinkInput={setShowFileLinkInput}
+              threadFileUrl={threadFileUrl}
+              setThreadFileUrl={setThreadFileUrl}
+              postThreadFile={postThreadFile}
+              toggleMessageReaction={toggleMessageReaction}
+            />
           </Tabs>
 
           {threadError ? (
