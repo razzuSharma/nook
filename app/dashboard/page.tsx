@@ -41,8 +41,7 @@ import {
 } from "@/components/ui/dialog"
 import { roomsApi } from "@/lib/convex-rooms-api"
 import { roomTasksApi } from "@/lib/convex-room-tasks-api"
-import { roomFocusApi } from "@/lib/convex-room-focus-api"
-import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
+import { dashboardApi } from "@/lib/convex-dashboard-api"
 import {
   SidebarInset,
   SidebarProvider,
@@ -290,79 +289,48 @@ function modeBadgeClass(mode?: string) {
   return "border-cyan-500/30 bg-cyan-500/15 text-cyan-800 dark:text-cyan-200"
 }
 
-function RoomMetricsCollector({
-  roomId,
-  sessionToken,
-  onTasks,
-  onPresence,
-  onMembers,
-}: {
-  roomId: Id<"rooms">
-  sessionToken: string | null
-  onTasks: (roomId: string, tasks: RoomTaskMetricDoc[]) => void
-  onPresence: (roomId: string, presence: FocusPresenceDoc[]) => void
-  onMembers: (roomId: string, members: RoomMemberDoc[]) => void
-}) {
-  const tasks = useQuery(roomTasksApi.listByRoom, { roomId }) as RoomTaskMetricDoc[] | undefined
-  const presence = useQuery(
-    roomFocusApi.listPresence,
-    sessionToken ? { sessionToken, roomId } : "skip"
-  ) as FocusPresenceDoc[] | undefined
-  const members = useQuery(
-    roomsApi.listMembersByRoom,
-    sessionToken ? { sessionToken, roomId } : "skip"
-  ) as RoomMemberDoc[] | undefined
-
-  React.useEffect(() => {
-    if (tasks) onTasks(String(roomId), tasks)
-  }, [roomId, tasks, onTasks])
-
-  React.useEffect(() => {
-    if (presence) onPresence(String(roomId), presence)
-  }, [roomId, presence, onPresence])
-
-  React.useEffect(() => {
-    if (members) onMembers(String(roomId), members)
-  }, [members, onMembers, roomId])
-
-  return null
-}
-
 export default function Page() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, sessionToken } = useAuth()
   const firstName = user?.name?.trim().split(/\s+/)[0] ?? "there"
   const userId = user?.id
-  const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const joinedRoomIdsQuery = useQuery(
-    roomsApi.joinedRoomIdsByUser,
-    userId ? { userId } : "skip"
-  ) as Id<"rooms">[] | undefined
+  const dashboardData = useQuery(
+    dashboardApi.get,
+    sessionToken ? { sessionToken } : "skip"
+  ) as
+    | {
+        rooms: RoomListItem[]
+        joinedRoomIds: Id<"rooms">[]
+        assignedTasks: AssignedRoomTask[]
+        focusSessions: FocusSessionDoc[]
+        roomTasksByRoom: Record<string, RoomTaskMetricDoc[]>
+        roomPresenceByRoom: Record<string, FocusPresenceDoc[]>
+        roomMembersByRoom: Record<string, RoomMemberDoc[]>
+      }
+    | undefined
+  const roomDocs = dashboardData?.rooms
   const joinedRoomIds = React.useMemo(
-    () => joinedRoomIdsQuery ?? [],
-    [joinedRoomIdsQuery]
+    () => dashboardData?.joinedRoomIds ?? [],
+    [dashboardData?.joinedRoomIds]
   )
   const createQuickTask = useMutation(roomTasksApi.createQuickTask)
   const joinRoomByCode = useMutation(roomsApi.joinByCode)
   const createRoomInDb = useMutation(roomsApi.create)
-  const assignedTasksQuery = useQuery(
-    roomTasksApi.listAssignedByUser,
-    userId ? { userId } : "skip"
-  ) as AssignedRoomTask[] | undefined
-  const focusSessions = useQuery(
-    focusSessionsApi.list,
-    sessionToken ? { sessionToken } : "skip"
-  ) as FocusSessionDoc[] | undefined
-  const [roomTasksByRoom, setRoomTasksByRoom] = React.useState<
-    Record<string, RoomTaskMetricDoc[]>
-  >({})
-  const [roomPresenceByRoom, setRoomPresenceByRoom] = React.useState<
-    Record<string, FocusPresenceDoc[]>
-  >({})
-  const [roomMembersByRoom, setRoomMembersByRoom] = React.useState<
-    Record<string, RoomMemberDoc[]>
-  >({})
+  const assignedTasksQuery = dashboardData?.assignedTasks
+  const focusSessions = dashboardData?.focusSessions
+  const roomTasksByRoom = React.useMemo(
+    () => dashboardData?.roomTasksByRoom ?? {},
+    [dashboardData?.roomTasksByRoom]
+  )
+  const roomPresenceByRoom = React.useMemo(
+    () => dashboardData?.roomPresenceByRoom ?? {},
+    [dashboardData?.roomPresenceByRoom]
+  )
+  const roomMembersByRoom = React.useMemo(
+    () => dashboardData?.roomMembersByRoom ?? {},
+    [dashboardData?.roomMembersByRoom]
+  )
   const [quickTask, setQuickTask] = React.useState("")
   const [nowTimestamp, setNowTimestamp] = React.useState(() => Date.now())
   const [focusGoalHours] = React.useState(6)
@@ -393,43 +361,7 @@ export default function Page() {
     return sortedByRecency.find((room) => joinedRoomIds.includes(room._id))?._id
   }, [roomDocs, joinedRoomIds])
   const isDashboardLoading =
-    roomDocs === undefined ||
-    (Boolean(userId) && assignedTasksQuery === undefined) ||
-    (Boolean(sessionToken) && focusSessions === undefined)
-
-  const handleRoomTasks = React.useCallback((roomId: string, tasks: RoomTaskMetricDoc[]) => {
-    setRoomTasksByRoom((prev) => (prev[roomId] === tasks ? prev : { ...prev, [roomId]: tasks }))
-  }, [])
-  const handleRoomPresence = React.useCallback((roomId: string, presence: FocusPresenceDoc[]) => {
-    setRoomPresenceByRoom((prev) =>
-      prev[roomId] === presence ? prev : { ...prev, [roomId]: presence }
-    )
-  }, [])
-  const handleRoomMembers = React.useCallback((roomId: string, members: RoomMemberDoc[]) => {
-    setRoomMembersByRoom((prev) => (prev[roomId] === members ? prev : { ...prev, [roomId]: members }))
-  }, [])
-
-  React.useEffect(() => {
-    const active = new Set(joinedRoomIds.map((roomId) => String(roomId)))
-    setRoomTasksByRoom((prev) => {
-      const next = Object.fromEntries(
-        Object.entries(prev).filter(([roomId]) => active.has(roomId))
-      )
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next
-    })
-    setRoomPresenceByRoom((prev) => {
-      const next = Object.fromEntries(
-        Object.entries(prev).filter(([roomId]) => active.has(roomId))
-      )
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next
-    })
-    setRoomMembersByRoom((prev) => {
-      const next = Object.fromEntries(
-        Object.entries(prev).filter(([roomId]) => active.has(roomId))
-      )
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next
-    })
-  }, [joinedRoomIds])
+    Boolean(sessionToken) && dashboardData === undefined
 
   React.useEffect(() => {
     const timer = window.setInterval(() => setNowTimestamp(Date.now()), 1_000)
@@ -1257,17 +1189,6 @@ export default function Page() {
                 </div>
               ))}
             </div>
-
-            {joinedRoomIds.map((roomId) => (
-              <RoomMetricsCollector
-                key={roomId}
-                roomId={roomId}
-                sessionToken={sessionToken}
-                onTasks={handleRoomTasks}
-                onPresence={handleRoomPresence}
-                onMembers={handleRoomMembers}
-              />
-            ))}
 
             <div className="mb-10 rounded-2xl border border-cyan-500/20 bg-background/70 p-5 backdrop-blur">
               <div className="mb-4 flex items-center justify-between">

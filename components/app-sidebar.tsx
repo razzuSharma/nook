@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useQuery } from "convex/react"
+import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -16,8 +17,8 @@ import {
   Users,
 } from "lucide-react"
 import type { Id } from "@/convex/_generated/dataModel"
-import { roomsApi } from "@/lib/convex-rooms-api"
 import { avatarSrcForKey } from "@/lib/avatar-options"
+import { sidebarApi } from "@/lib/convex-sidebar-api"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/components/providers/auth-provider"
@@ -100,15 +101,20 @@ function roomDotClass(icon?: RoomListItem["icon"]) {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { state: sidebarState } = useSidebar()
   const router = useRouter()
-  const { user, signOut } = useAuth()
+  const { user, sessionToken, signOut } = useAuth()
   const pathname = usePathname()
   const [hash, setHash] = React.useState("")
-  const userId = user?.id
-  const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const pinnedRoomIdsQuery = useQuery(
-    roomsApi.pinnedRoomIdsByUser,
-    userId ? { userId } : "skip"
-  ) as Id<"rooms">[] | undefined
+  const sidebarData = useQuery(
+    sidebarApi.get,
+    sessionToken ? { sessionToken, notificationLimit: 20 } : "skip"
+  ) as
+    | {
+        rooms: RoomListItem[]
+        pinnedRoomIds: Id<"rooms">[]
+      }
+    | undefined
+  const roomDocs = sidebarData?.rooms
+  const pinnedRoomIdsQuery = sidebarData?.pinnedRoomIds
   const pinnedRooms = React.useMemo(
     () =>
       (roomDocs ?? []).filter((room) =>
@@ -200,26 +206,38 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
                 <div className="relative flex h-full w-full items-center">
                   {/* Collapsed Icon Version */}
-                  <img
+                  <Image
                     src="/nook-logo.png"
                     alt="Nook logo"
+                    width={32}
+                    height={32}
+                    priority
                     className="absolute inset-0 h-8 w-8 object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-100 opacity-0 dark:block hidden"
                   />
-                  <img
+                  <Image
                     src="/nook-logo-light.png"
                     alt="Nook logo"
+                    width={32}
+                    height={32}
+                    priority
                     className="absolute inset-0 h-8 w-8 scale-[0.85] -translate-y-[2px] object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-100 opacity-0 dark:hidden block"
                   />
 
                   {/* Expanded Full Logo */}
-                  <img
+                  <Image
                     src="/nook.png"
                     alt="Nook logo"
+                    width={140}
+                    height={40}
+                    priority
                     className="h-10 w-auto object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-0 opacity-100 dark:block hidden"
                   />
-                  <img
+                  <Image
                     src="/nook-light.png"
                     alt="Nook logo"
+                    width={140}
+                    height={40}
+                    priority
                     className="h-10 w-auto scale-[0.78] -translate-x-[12px] -translate-y-[3px] object-contain transition-opacity duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-data-[collapsible=icon]:opacity-0 opacity-100 dark:hidden block"
                   />
                 </div>

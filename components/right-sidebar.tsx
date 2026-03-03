@@ -13,11 +13,8 @@ import {
   Users,
 } from "lucide-react"
 import { useAuth } from "@/components/providers/auth-provider"
-import { tasksApi } from "@/lib/convex-tasks-api"
-import { roomTasksApi } from "@/lib/convex-room-tasks-api"
-import { focusSessionsApi } from "@/lib/convex-focus-sessions-api"
-import { roomsApi } from "@/lib/convex-rooms-api"
 import { notificationsApi } from "@/lib/convex-notifications-api"
+import { sidebarApi } from "@/lib/convex-sidebar-api"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -34,11 +31,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 
-type TaskDoc = {
+type UpcomingTaskDoc = {
   taskId: string
   title: string
   dueDate: string
   dueTime: string
+  dueAt: number
   status: "todo" | "working" | "completed"
 }
 
@@ -49,17 +47,6 @@ type AssignedRoomTask = {
   status: "todo" | "working" | "blocked" | "completed"
   dueAt?: number
   roomName: string
-}
-
-type FocusSessionDoc = {
-  durationMinutes: number
-  createdAt: number
-}
-
-type RoomListItem = {
-  _id: string
-  name: string
-  membersCount: number
 }
 
 type ViewerNotificationResult = {
@@ -76,16 +63,6 @@ type ViewerNotificationResult = {
 }
 
 const COLLAPSED_STORAGE_KEY = "nook.right.sidebar.collapsed.v1"
-
-function startOfToday() {
-  const now = new Date()
-  now.setHours(0, 0, 0, 0)
-  return now.getTime()
-}
-
-function startOfTomorrow() {
-  return startOfToday() + 24 * 60 * 60 * 1000
-}
 
 function formatDue(timestamp?: number) {
   if (!timestamp) return "No due"
@@ -108,23 +85,19 @@ export function RightSidebar() {
     [user?.id]
   )
 
-  const focusSessions = useQuery(
-    focusSessionsApi.list,
-    sessionToken ? { sessionToken } : "skip"
-  ) as FocusSessionDoc[] | undefined
-  const personalTasks = useQuery(
-    tasksApi.list,
-    sessionToken ? { sessionToken } : "skip"
-  ) as TaskDoc[] | undefined
-  const assignedTasks = useQuery(
-    roomTasksApi.listAssignedByUser,
-    user?.id ? { userId: user.id } : "skip"
-  ) as AssignedRoomTask[] | undefined
-  const roomDocs = useQuery(roomsApi.list) as RoomListItem[] | undefined
-  const notifications = useQuery(
-    notificationsApi.listByViewer,
-    sessionToken ? { sessionToken, limit: 20 } : "skip"
-  ) as ViewerNotificationResult | undefined
+  const sidebarData = useQuery(
+    sidebarApi.get,
+    sessionToken ? { sessionToken, notificationLimit: 20 } : "skip"
+  ) as
+    | {
+        todayFocusHours: number
+        assignedTasks: AssignedRoomTask[]
+        upcomingPersonalTasks: UpcomingTaskDoc[]
+        activeMembersPreview: Array<{ key: string; initials: string; color: string }>
+        totalOnlineCount: number
+        notifications: ViewerNotificationResult
+      }
+    | undefined
   const markNotificationRead = useMutation(notificationsApi.markRead)
   const markAllNotificationsRead = useMutation(notificationsApi.markAllRead)
 
@@ -144,59 +117,18 @@ export function RightSidebar() {
     window.localStorage.setItem(collapsedStorageKey, collapsed ? "1" : "0")
   }, [collapsed, collapsedStorageKey, hasLoadedCollapsedPref])
 
-  const todayFocusHours = React.useMemo(() => {
-    const today = startOfToday()
-    const minutes = (focusSessions ?? [])
-      .filter((session) => session.createdAt >= today)
-      .reduce((sum, session) => sum + session.durationMinutes, 0)
-    return Number((minutes / 60).toFixed(1))
-  }, [focusSessions])
+  const todayFocusHours = sidebarData?.todayFocusHours ?? 0
   const focusGoalHours = 6
   const focusPercent = Math.min(100, Math.round((todayFocusHours / focusGoalHours) * 100))
 
   const myAssignedTasks = React.useMemo(() => {
-    return (assignedTasks ?? []).filter((task) => task.status !== "completed").slice(0, 6)
-  }, [assignedTasks])
+    return sidebarData?.assignedTasks ?? []
+  }, [sidebarData?.assignedTasks])
 
-  const upcoming = React.useMemo(() => {
-    const from = startOfToday()
-    const to = startOfTomorrow() + 24 * 60 * 60 * 1000
-    return (personalTasks ?? [])
-      .filter((task) => task.status !== "completed" && task.dueDate)
-      .map((task) => ({
-        ...task,
-        dueAt: new Date(`${task.dueDate}T${task.dueTime || "09:00"}`).getTime(),
-      }))
-      .filter((task) => !Number.isNaN(task.dueAt) && task.dueAt >= from && task.dueAt < to)
-      .sort((a, b) => a.dueAt - b.dueAt)
-      .slice(0, 5)
-  }, [personalTasks])
-
-  const activeMembersPreview = React.useMemo(() => {
-    return (roomDocs ?? [])
-      .filter((room) => room.membersCount > 0)
-      .sort((a, b) => b.membersCount - a.membersCount)
-      .slice(0, 6)
-      .map((room, index) => ({
-        key: room._id,
-        initials: room.name
-          .split(" ")
-          .map((part) => part[0] ?? "")
-          .join("")
-          .slice(0, 2)
-          .toUpperCase(),
-        color:
-          index % 3 === 0
-            ? "bg-emerald-500"
-            : index % 3 === 1
-              ? "bg-amber-500"
-              : "bg-cyan-500",
-      }))
-  }, [roomDocs])
-
-  const totalOnlineCount = React.useMemo(() => {
-    return (roomDocs ?? []).reduce((sum, room) => sum + room.membersCount, 0)
-  }, [roomDocs])
+  const upcoming = sidebarData?.upcomingPersonalTasks ?? []
+  const activeMembersPreview = sidebarData?.activeMembersPreview ?? []
+  const totalOnlineCount = sidebarData?.totalOnlineCount ?? 0
+  const notifications = sidebarData?.notifications
 
   const actions = [
     { icon: Bell, label: "Notifications", onClick: () => setNotificationsOpen(true) },
