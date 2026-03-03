@@ -1,3 +1,4 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/razzuSharma/nook)
 # Nook
 
 Nook is a focused execution workspace for small teams.
