@@ -35,6 +35,13 @@ async function requireUser(ctx: QueryCtx, sessionToken: string) {
   return user
 }
 
+function sanitizeText(value: string | undefined | null) {
+  if (!value) return ""
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+}
+
 export const get = query({
   args: {
     sessionToken: v.string(),
@@ -66,7 +73,9 @@ export const get = query({
     const joinedRoomIdSet = new Set(joinedRoomIds.map((roomId) => String(roomId)))
 
     const joinedRooms = roomDocs.filter((room) => joinedRoomIdSet.has(String(room._id)))
-    const roomNameById = new Map(joinedRooms.map((room) => [String(room._id), room.name]))
+    const roomNameById = new Map(
+      joinedRooms.map((room) => [String(room._id), sanitizeText(room.name)])
+    )
 
     const assignedTasks = roomTasks
       .filter((task) => String(task.assigneeUserId ?? "") === String(userId))
@@ -76,7 +85,7 @@ export const get = query({
       )
       .map((task) => ({
         taskId: task.taskId,
-        title: task.title,
+        title: sanitizeText(task.title),
         priority: task.priority,
         status: task.status,
         dueAt: task.dueAt,
@@ -91,7 +100,7 @@ export const get = query({
           .filter((task) => String(task.roomId) === String(roomId))
           .map((task) => ({
             taskId: task.taskId,
-            title: task.title,
+            title: sanitizeText(task.title),
             status: task.status,
             dueAt: task.dueAt,
             createdAt: task.createdAt,
@@ -140,11 +149,11 @@ export const get = query({
             const member = usersById.get(membership.userId)
             return {
               userId: membership.userId,
-              name: member?.name ?? "Unknown User",
-              username: member?.username ?? "",
-              email: member?.email ?? "",
+              name: sanitizeText(member?.name ?? "Unknown User"),
+              username: sanitizeText(member?.username ?? ""),
+              email: sanitizeText(member?.email ?? ""),
               role: membership.role,
-              avatarKey: member?.avatarKey ?? "avatar-1",
+              avatarKey: sanitizeText(member?.avatarKey ?? "avatar-1"),
             }
           }),
       ])
